@@ -275,6 +275,19 @@ function restoreFilters(){
 function exitWrong(){optWrong.checked=false;restoreFilters();start()}
 
 let deck=[],pos=0,ok=0,bad=0,state='ask',last=null;
+// the round in progress (word order, position, score, filters it was built from) is saved so a refresh picks up where it left off
+function save(){store.set('round',{ids:deck.map(r=>r.id),pos,ok,bad,state,last,wo:optWrong.checked,sc:scopeSel.value,lvl:getLvl(),src:getSrc()})}
+function resume(){
+  const s=store.get('round',null);
+  if(!s||!Array.isArray(s.ids)||typeof s.lvl!=='string'||typeof s.src!=='string') return false;
+  const byId={}; R.forEach(r=>byId[r.id]=r);
+  const d=s.ids.map(id=>byId[id]); if(!d.length||!d.every(Boolean)) return false;
+  optWrong.checked=!!s.wo; scopeSel.value=s.sc; if(!scopeSel.value) scopeSel.value='all';
+  getLvl.set(s.lvl); getSrc.set(s.src);
+  deck=d; pos=Math.min(s.pos|0,deck.length); ok=s.ok|0; bad=s.bad|0;
+  state=s.state==='show'&&s.last&&pos<deck.length?'show':'ask'; last=state==='show'?s.last:null;
+  paint(true); return true;
+}
 function pool(){
   const lvl=getLvl(), src=getSrc(), sc=scopeSel.value;
   return R.filter(r=>inScope(r,sc)&&(lvl==='0'||String(r.p)===lvl)&&(src==='all'||r.src===src)&&(!optWrong.checked||wrong[r.w]));
@@ -282,7 +295,7 @@ function pool(){
 function start(){
   deck=pool().slice();
   if(optShuffle.checked){for(let i=deck.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[deck[i],deck[j]]=[deck[j],deck[i]]}}
-  pos=0;ok=0;bad=0;state='ask';last=null;paint(true);
+  pos=0;ok=0;bad=0;state='ask';last=null;save();paint(true);
 }
 function norm(s){return s.toLowerCase().replace(/[’']/g,"'").replace(/\s+/g,' ').trim()}
 function accepted(r){return [r.w,...r.alt].map(norm)}
@@ -340,7 +353,7 @@ function paint(focus){
     if(focus!==false) inp.focus({preventScroll:true});
   } else {
     $('#next').onclick=next;
-    const ov=$('#override'); if(ov) ov.onclick=()=>{ if(wrong[r.w]){wrong[r.w]--; if(wrong[r.w]<=0) delete wrong[r.w]; store.set('wrong',wrong)} bad--;ok++;last.good=true;updWrongCount();paint()};
+    const ov=$('#override'); if(ov) ov.onclick=()=>{ if(wrong[r.w]){wrong[r.w]--; if(wrong[r.w]<=0) delete wrong[r.w]; store.set('wrong',wrong)} bad--;ok++;last.good=true;save();updWrongCount();paint()};
     $('#next').focus({preventScroll:true});
   }
 }
@@ -349,9 +362,9 @@ function check(give){
   if(give!==true&&!got.trim()){ $('#ans').focus(); return; }
   const good=give!==true&&accepted(r).includes(norm(got));
   if(good) ok++; else {bad++; wrong[r.w]=(wrong[r.w]||0)+1; store.set('wrong',wrong); updWrongCount()}
-  last={got:give===true?'':got.trim(),good}; state='show'; paint();
+  last={got:give===true?'':got.trim(),good}; state='show'; save(); paint();
 }
-function next(){pos++;state='ask';last=null;paint()}
+function next(){pos++;state='ask';last=null;save();paint()}
 document.addEventListener('keydown',e=>{ if(e.key==='Enter'&&state==='show'&&!$('#p-drill').hidden&&document.activeElement.tagName!=='SELECT'){ if(document.activeElement.id==='override') return; e.preventDefault(); next(); } });
 
 /* ---------- list ---------- */
@@ -399,7 +412,7 @@ function restoreClear(){$('#clearBox').innerHTML='<button class="btn ghost" id="
 $('#clearWrong').addEventListener('click',askClear);
 updWrongCount();
 const h0=(location.hash||'').slice(1);
-start();
+if(!resume()) start();
 if(['list','wrong'].includes(h0)) showTab(h0);
 })();
 </script>
