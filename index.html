@@ -35,6 +35,14 @@ h1{font-family:var(--f-display);font-weight:800;font-size:clamp(26px,5vw,36px);l
 .sub{color:var(--muted);margin:0;max-width:62ch}
 .stats{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:var(--muted)}
 .stats b{color:var(--ink);font-variant-numeric:tabular-nums;font-family:var(--f-word);font-weight:600}
+.sync{font-size:13px;color:var(--muted)}
+.sync summary{cursor:pointer;width:fit-content}
+.sync summary:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.sync.err summary{color:var(--red)}
+.sync-body{margin-top:8px;display:flex;flex-direction:column;gap:8px;background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:12px 14px;max-width:62ch}
+.sync-body ol{margin:0;padding-left:1.3em}
+.sync-body a{color:var(--ink)}
+.sync-body input{font:inherit;font-size:14px;color:var(--ink);background:var(--paper);border:1px solid var(--rule-strong);border-radius:6px;padding:7px 9px;flex:1;min-width:12em}
 .tabs{display:flex;gap:4px;border-bottom:2px solid var(--rule);flex-wrap:wrap}
 .tab{appearance:none;border:0;background:none;color:var(--muted);font:inherit;font-weight:600;padding:8px 14px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px}
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--red)}
@@ -149,6 +157,7 @@ td.src.chao{color:var(--red)}
     <h1>写作词汇默写本</h1>
     <p class="sub">从红宝书 6550 词里逐个筛出作文用得上的词，按题型和话题分类，每个词配一条作文搭配；另补了书里没收、但作文常用的派生词和新词。看中文写英文，拼错的自动进错词本。</p>
     <div class="stats" id="stats"></div>
+    <details class="sync" id="sync"><summary id="syncState">跨浏览器同步：未开启</summary><div class="sync-body" id="syncBody"></div></details>
   </header>
 
   <nav class="tabs" role="tablist">
@@ -216,7 +225,7 @@ SEC.forEach(s=>s[2].forEach(c=>CAT[c[0]]={name:c[1],sec:s[0],count:c[2],core:c[3
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const store={get(k,d){try{const v=localStorage.getItem('xzmx:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},
-             set(k,v){try{localStorage.setItem('xzmx:'+k,JSON.stringify(v))}catch(e){}}};
+             set(k,v){try{localStorage.setItem('xzmx:'+k,JSON.stringify(v))}catch(e){} touched()}};
 let wrong=store.get('wrong',{}); // word -> count
 const nc=R.filter(r=>r.src==='超').length, nw=R.filter(r=>r.src==='外').length, ncore=R.filter(r=>r.p===1).length;
 $('#stats').innerHTML=`<span>共 <b>${R.length}</b> 词</span><span>★ 核心 <b>${ncore}</b></span><span>基础词 <b>${R.length-nc-nw}</b></span><span>超纲词 <b>${nc}</b></span><span>表外补充 <b>${nw}</b></span>`;
@@ -410,10 +419,154 @@ function askClear(){
 }
 function restoreClear(){$('#clearBox').innerHTML='<button class="btn ghost" id="clearWrong">清空错词本</button>';$('#clearWrong').addEventListener('click',askClear)}
 $('#clearWrong').addEventListener('click',askClear);
+
+/* ---------- sync ---------- */
+// Everything under 'xzmx:' is mirrored to one private gist of the user's; the bookkeeping under 'xzmx-sync:' stays in this browser.
+// t = when local data last changed, base = the t of the gist content this browser last pulled or pushed.
+const API='https://api.github.com', FILE='xzmx-sync.json';
+const ss={get(k){try{return localStorage.getItem('xzmx-sync:'+k)}catch(e){return null}},
+          set(k,v){try{v==null?localStorage.removeItem('xzmx-sync:'+k):localStorage.setItem('xzmx-sync:'+k,String(v))}catch(e){}}};
+let ready=false, running=null, rerun=false, flushing=null, pushTimer=0, retryTimer=0, syncState='', syncedAt='';
+const localT=()=>+ss.get('t')||0;
+function canon(v){return v&&typeof v==='object'?(Array.isArray(v)?'['+v.map(canon).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}'):JSON.stringify(v)}
+function touched(){ // called on every store.set once the page has loaded
+  if(!ready) return;
+  ss.set('t',Math.max(Date.now(),localT()+1));
+  if(ss.get('token')){clearTimeout(pushTimer);pushTimer=setTimeout(sync,1500)}
+}
+async function gh(method,path,body,keepalive){
+  if(method==='GET') path+=(path.includes('?')?'&':'?')+'_='+Date.now(); // keep the browser's HTTP cache out of it
+  const headers={Authorization:'Bearer '+ss.get('token'),Accept:'application/vnd.github+json'};
+  if(body) headers['Content-Type']='application/json';
+  const res=await fetch(API+path,{method,headers,keepalive:!!keepalive,body:body?JSON.stringify(body):undefined});
+  if(!res.ok){const e=new Error('GitHub '+res.status);e.status=res.status;throw e}
+  return res.json();
+}
+function blob(){
+  const data={};
+  try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith('xzmx:')) data[k.slice(5)]=JSON.parse(localStorage.getItem(k))}}catch(e){}
+  return {v:1,t:localT(),data};
+}
+async function findGist(){ // a new browser only needs the token: look the gist up by its file name
+  for(let page=1;page<=10;page++){
+    const list=await gh('GET','/gists?per_page=100&page='+page);
+    const g=list.find(x=>x.files&&x.files[FILE]); if(g) return g.id;
+    if(list.length<100) break;
+  }
+  return null;
+}
+async function push(){
+  const b=blob();
+  await gh('PATCH','/gists/'+ss.get('gist'),{files:{[FILE]:{content:JSON.stringify(b)}}});
+  ss.set('base',b.t);
+}
+function merge(remote,joining){ // the newer side wins (the gist, when this browser is joining), except that both wrong-word books are kept (higher miss count per word)
+  const mine=blob(), [older,newer]=joining||remote.t>mine.t?[mine,remote]:[remote,mine];
+  const data=Object.assign({},older.data,newer.data), w=Object.assign({},older.data.wrong);
+  Object.entries(newer.data.wrong||{}).forEach(([k,n])=>{w[k]=Math.max(n,w[k]||0)});
+  data.wrong=w; return data;
+}
+function applyData(data,t){ // replace local data with synced data and redraw from it
+  const same=canon(data)===canon(blob().data);
+  try{Object.keys(data).forEach(k=>localStorage.setItem('xzmx:'+k,JSON.stringify(data[k])))}catch(e){}
+  ss.set('t',t);
+  if(!same) reloadState();
+}
+function reloadState(){
+  wrong=store.get('wrong',{}); updWrongCount();
+  optHint.checked=store.get('hint',true); optShuffle.checked=store.get('shuffle',true); optWrong.checked=false;
+  restoreFilters();
+  lscope.value=store.get('lscope','all'); if(!lscope.value) lscope.value='all';
+  getMask.set(store.get('mask','none')); lCore.checked=store.get('lcore',false);
+  if(!resume()) start();
+  if(!$('#p-list').hidden) renderList();
+  if(!$('#p-wrong').hidden) renderWrong();
+}
+async function syncOnce(retried){
+  if(flushing) await flushing;
+  let id=ss.get('gist');
+  if(!id&&(id=await findGist())) ss.set('gist',id);
+  if(!id){ // first browser to connect: the gist starts from its data
+    if(!localT()) ss.set('t',Date.now());
+    const b=blob();
+    const g=await gh('POST','/gists',{description:'写作词汇默写本 · 同步数据（请勿删除）',public:false,files:{[FILE]:{content:JSON.stringify(b)}}});
+    ss.set('gist',g.id); ss.set('base',b.t); return;
+  }
+  let g;
+  try{g=await gh('GET','/gists/'+id)}
+  catch(e){ if(e.status===404&&!retried){ss.set('gist',null);ss.set('base',null);return syncOnce(true)} throw e }
+  let remote=null; try{remote=JSON.parse(g.files[FILE].content)}catch(e){}
+  if(!remote||!remote.data){ if(!localT()) ss.set('t',Date.now()); return push() }
+  const t=localT(), base=ss.get('base')==null?null:+ss.get('base'), rt=remote.t;
+  if(rt===t){ss.set('base',t);return} // the gist already holds exactly this browser's data
+  if(base===null||(rt!==base&&t>base)){ // first connect, or changed on both sides
+    const m=merge(remote,base===null);
+    if(canon(m)===canon(remote.data)){applyData(m,rt);ss.set('base',rt);return}
+    applyData(m,Math.max(Date.now(),t+1,rt+1)); return push();
+  }
+  if(rt!==base){applyData(remote.data,rt);ss.set('base',rt);return}
+  if(t>base) return push();
+}
+function sync(){
+  if(!ss.get('token')) return Promise.resolve();
+  if(running){rerun=true;return running}
+  clearTimeout(pushTimer); clearTimeout(retryTimer); setSync('busy');
+  running=(async()=>{
+    try{ do{rerun=false;await syncOnce()}while(rerun); syncedAt=new Date().toTimeString().slice(0,5); setSync('ok') }
+    catch(e){
+      if(e.status===401){['token','gist','base'].forEach(k=>ss.set(k,null));syncState='bad';renderSync()}
+      else {setSync('fail');retryTimer=setTimeout(sync,30000)}
+    }
+    finally{running=null}
+  })();
+  return running;
+}
+function flush(){ // the page may be closing: send unsynced changes now; keepalive lets the request outlive the page
+  const id=ss.get('gist'), base=ss.get('base'), b=blob();
+  if(!ss.get('token')||!id||base==null||b.t<=+base||running||flushing) return;
+  clearTimeout(pushTimer);
+  flushing=gh('PATCH','/gists/'+id,{files:{[FILE]:{content:JSON.stringify(b)}}},true)
+    .then(()=>{ss.set('base',b.t)},()=>{}).finally(()=>{flushing=null});
+}
+function setSync(s){syncState=s;paintSyncState()}
+function paintSyncState(){
+  const on=!!ss.get('token');
+  $('#syncState').textContent='跨浏览器同步：'+(!on?(syncState==='bad'?'令牌无效或已过期，请重新填写':'未开启')
+    :syncState==='busy'?'同步中…':syncState==='fail'?'同步失败（网络问题），稍后自动重试':syncState==='ok'?'已同步 · '+syncedAt:'已开启');
+  $('#sync').classList.toggle('err',syncState==='bad'||syncState==='fail');
+}
+function renderSync(){
+  const box=$('#syncBody');
+  if(ss.get('token')){
+    box.innerHTML=`<div>已连接到你 GitHub 账号下的私有 Gist。打开页面或切回这个标签页时自动拉取，练习时自动上传。</div>
+      <div class="row"><button class="btn" id="syncNow">立即同步</button><button class="btn ghost" id="syncOff">关闭同步</button></div>`;
+    $('#syncNow').onclick=()=>sync();
+    $('#syncOff').onclick=()=>{clearTimeout(pushTimer);clearTimeout(retryTimer);['token','gist','base'].forEach(k=>ss.set(k,null));syncState='';renderSync()};
+  } else {
+    box.innerHTML=`<div>把错词本和练习进度存进你 GitHub 账号下的一个私有 Gist。每个浏览器填一次令牌，之后自动同步。</div>
+      <ol><li>打开 <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=%E5%86%99%E4%BD%9C%E8%AF%8D%E6%B1%87%E9%BB%98%E5%86%99%E6%9C%AC" target="_blank" rel="noopener">GitHub · 新建令牌</a>（已勾好 gist 权限），有效期建议选长一些或 No expiration，点 Generate token 后复制。</li>
+      <li>粘贴到下面，点“开启同步”。在别的浏览器里再做一次，可以用同一个令牌。</li></ol>
+      <div class="row"><input type="password" id="syncToken" placeholder="ghp_…" autocomplete="off" aria-label="GitHub 令牌"><button class="btn primary" id="syncOn">开启同步</button></div>
+      <div>令牌只保存在这个浏览器里，且只能读写 Gist。第一次连接时，这个浏览器里的错词会和云端合并，不会丢。</div>`;
+    const inp=$('#syncToken');
+    $('#syncOn').onclick=()=>{
+      const tok=inp.value.trim(); if(!tok){inp.focus();return}
+      ss.set('token',tok); ss.set('gist',null); ss.set('base',null); renderSync(); sync();
+    };
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();$('#syncOn').click()}});
+  }
+  paintSyncState();
+}
+const pull=()=>{if(!running) sync()};
+document.addEventListener('visibilitychange',()=>document.visibilityState==='hidden'?flush():pull());
+addEventListener('pagehide',flush);
+addEventListener('focus',pull);
+
 updWrongCount();
 const h0=(location.hash||'').slice(1);
 if(!resume()) start();
 if(['list','wrong'].includes(h0)) showTab(h0);
+ready=true; renderSync(); sync();
 })();
 </script>
 
