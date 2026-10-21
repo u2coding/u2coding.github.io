@@ -89,6 +89,7 @@ select{font:inherit;font-size:14px;color:var(--ink);background:var(--paper);bord
 .lines input{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;color:var(--ink);
   font-family:var(--f-word);font-size:30px;line-height:1;padding:12px 12px 22px;letter-spacing:.04em;caret-color:var(--red)}
 .lines input:focus{outline:none}
+.lines.shown input{caret-color:transparent}
 .lines:focus-within{box-shadow:0 0 0 2px var(--rule-strong)}
 .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .kbd{font-size:12px;color:var(--faint);margin-left:auto}
@@ -391,6 +392,31 @@ function diff(ans,got){ // mark letters of ans not matched by LCS with got
 function promptHTML(p){ // dim the part-of-speech tags
   return esc(p).replace(/((?:vt|vi|n|adj|adv|prep|conj|det|pron|modal|vlink|int)\.(?:\/(?:vt|vi|n|adj|adv|prep|conj)\.)*)/g,'<span class="pos">$1</span>');
 }
+// One answer box stays on the card from the question through the answer to the next word: replacing a focused input closes
+// the phone keyboard and a readonly one never opens it, so while the answer shows the box stays editable and typing in it is undone.
+function answerCard(box,id,label,bind){ // the card's answer box, building the card around it (and calling bind on the new box) if it isn't up
+  let inp=box.querySelector('#'+id);
+  if(!inp){
+    box.innerHTML=`<div class="card"><div class="lines"><input id="${id}" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="${label}"></div></div>`;
+    inp=box.querySelector('#'+id); bind(inp);
+  }
+  return inp;
+}
+function fillCard(inp,before,after,shown,got){ // replace everything on the card around the answer box
+  const lines=inp.parentNode;
+  [...lines.parentNode.children].forEach(el=>{if(el!==lines) el.remove()});
+  lines.insertAdjacentHTML('beforebegin',before); lines.insertAdjacentHTML('afterend',after);
+  lines.classList.toggle('shown',shown); inp.setAttribute('aria-readonly',String(shown));
+  if(shown) inp.value=got;
+}
+function keepFocus(box){ // a tap on the card's buttons would take focus from the answer box and close the phone keyboard
+  box.addEventListener('mousedown',e=>{const a=document.activeElement;if(e.target.closest('button')&&a&&a.tagName==='INPUT'&&box.contains(a)) e.preventDefault()});
+}
+function inView(a,b){ // scroll as little as needed to show a's top down to b's bottom above the phone keyboard; a's top wins when it can't all fit
+  const vv=window.visualViewport, t=vv?vv.offsetTop:0, h=vv?vv.height:innerHeight;
+  const up=a.getBoundingClientRect().top-t-8, down=b.getBoundingClientRect().bottom-t-h+8;
+  if(up<0) scrollBy(0,up); else if(down>0) scrollBy(0,Math.min(down,up));
+}
 function paint(focus){
   const box=$('#drill');
   if(!deck.length){
@@ -408,15 +434,20 @@ function paint(focus){
     return;
   }
   const r=deck[pos]; const c=CAT[r.cat];
-  let h=`<div class="card"><div class="meta"><span class="tag">${esc(c.name)}</span>${r.p===1?'<span class="tag core">★ 核心</span>':''}<span class="tag ${r.src==='超'?'chao':''}">${esc(srcLabel(r))}</span><span class="prog">${pos+1} / ${deck.length} · 对 ${ok} · 错 ${bad}</span></div>
+  const inp=answerCard(box,'ans','写出英文单词',inp=>{
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&state==='ask'){e.preventDefault();e.stopPropagation();check()}});
+    inp.addEventListener('input',()=>{if(state==='show') inp.value=last.got});
+  });
+  if(inp.deck!==deck||inp.pos!==pos){inp.deck=deck;inp.pos=pos;inp.value=''} // a new word
+  const top=`<div class="meta"><span class="tag">${esc(c.name)}</span>${r.p===1?'<span class="tag core">★ 核心</span>':''}<span class="tag ${r.src==='超'?'chao':''}">${esc(srcLabel(r))}</span><span class="prog">${pos+1} / ${deck.length} · 对 ${ok} · 错 ${bad}</span></div>
   <p class="prompt">${promptHTML(state==='ask'?r.q:r.prompt)}</p>
-  <div class="hint">${optHint.checked?esc(hintOf(r.w))+`　(${letters(r.w)})`:''}</div>
-  <div class="lines"><input id="ans" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="写出英文单词" ${state==='ask'?'':'readonly'} value="${state==='ask'?'':esc(last.got)}"></div>`;
+  <div class="hint">${optHint.checked?esc(hintOf(r.w))+`　(${letters(r.w)})`:''}</div>`;
+  let bot;
   if(state==='ask'){
-    h+=`<div class="actions"><button class="btn primary" id="check">检查</button><button class="btn" id="giveup">不会，看答案</button><span class="kbd">回车检查 · 再按回车下一个</span></div>`;
+    bot=`<div class="actions"><button class="btn primary" id="check">检查</button><button class="btn" id="giveup">不会，看答案</button><span class="kbd">回车检查 · 再按回车下一个</span></div>`;
   } else {
     const good=last.good;
-    h+=`<div class="verdict ${good?'ok':'bad'}"><div class="vhead"><span class="mark">${good?'✓ 正确':(last.got?'✗ 拼错了':'✗ 没写出来')}</span><span class="answer">${good?esc(r.w):diff(r.w,last.got)}</span>${(!good&&last.got)?`<span class="yours">${esc(last.got)}</span>`:''}</div>
+    bot=`<div class="verdict ${good?'ok':'bad'}"><div class="vhead"><span class="mark">${good?'✓ 正确':(last.got?'✗ 拼错了':'✗ 没写出来')}</span><span class="answer">${good?esc(r.w):diff(r.w,last.got)}</span>${(!good&&last.got)?`<span class="yours">${esc(last.got)}</span>`:''}</div>
       ${r.alt.length?`<div style="font-size:13px;color:var(--muted)">也可写作：${r.alt.map(esc).join('、')}</div>`:''}
       <div class="col"><span class="en">${esc(r.col)}</span>　<span class="cn">${esc(r.colcn)}</span></div>
       ${r.book?`<div class="book">书中释义：${esc(r.book)}</div>`:''}
@@ -424,26 +455,25 @@ function paint(focus){
     </div>
     <div class="actions"><button class="btn primary" id="next">下一个</button><span class="kbd">回车下一个</span></div>`;
   }
-  h+='</div>'; box.innerHTML=h;
-  const inp=$('#ans');
+  fillCard(inp,top,bot,state==='show',last&&last.got);
   if(state==='ask'){
     $('#check').onclick=check; $('#giveup').onclick=()=>check(true);
-    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();check()}});
     if(focus!==false) inp.focus({preventScroll:true});
-  } else {
+  } else { // focus stays in the answer box, so the keyboard stays up and its Enter key goes on to the next word
     $('#next').onclick=next;
-    const ov=$('#override'); if(ov) ov.onclick=()=>{ if(wrong[r.w]){wrong[r.w]--; if(wrong[r.w]<=0) delete wrong[r.w]; store.set('wrong',wrong)} bad--;ok++;last.good=true;logFix('w',r.id,last.day);save();updWrongCount();paint()};
-    $('#next').focus({preventScroll:true});
+    const ov=$('#override'); if(ov) ov.onclick=()=>{ if(wrong[r.w]){wrong[r.w]--; if(wrong[r.w]<=0) delete wrong[r.w]; store.set('wrong',wrong)} bad--;ok++;last.good=true;logFix('w',r.id,last.day);save();updWrongCount();paint();inView($('#drill .verdict'),$('#next'))};
   }
 }
+keepFocus($('#drill'));
 function check(give){
   const r=deck[pos]; const got=give===true?'':$('#ans').value;
   if(give!==true&&!got.trim()){ $('#ans').focus(); return; }
   const good=give!==true&&accepted(r).includes(norm(got));
   if(good) ok++; else {bad++; wrong[r.w]=(wrong[r.w]||0)+1; store.set('wrong',wrong); updWrongCount()}
   last={got:give===true?'':got.trim(),good,day:give===true?null:logAnswer('w',r.id,good)}; state='show'; save(); paint();
+  inView($('#drill .verdict'),$('#next'));
 }
-function next(){pos++;state='ask';last=null;save();paint()}
+function next(){pos++;state='ask';last=null;save();paint();const c=$('#drill .card');inView(c,$('#drill .lines')||c)}
 document.addEventListener('keydown',e=>{ if(e.key==='Enter'&&state==='show'&&!$('#p-drill').hidden&&document.activeElement.tagName!=='SELECT'){ if(document.activeElement.id==='override') return; e.preventDefault(); next(); } });
 
 /* ---------- list ---------- */
@@ -564,34 +594,36 @@ function spaint(focus){
     $('#sagain').onclick=()=>sstart(); return;
   }
   const x=sdeck[spos], g=SYN[x.gi];
-  let h=`<div class="card"><div class="meta"><span class="tag">S${String(x.gi+1).padStart(2,'0')} ${esc(g.t)}</span>${x.rec===1?'<span class="tag core">首选</span>':''}<span class="prog">${spos+1} / ${sdeck.length} · 对 ${sok} · 错 ${sbad}</span></div>`;
+  const inp=answerCard(box,'sans','填入空格的词',inp=>{
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&sstate==='ask'){e.preventDefault();e.stopPropagation();scheck()}});
+    inp.addEventListener('input',()=>{if(sstate==='show') inp.value=slast.got});
+  });
+  if(inp.deck!==sdeck||inp.pos!==spos){inp.deck=sdeck;inp.pos=spos;inp.value=''} // a new sentence
+  let top=`<div class="meta"><span class="tag">S${String(x.gi+1).padStart(2,'0')} ${esc(g.t)}</span>${x.rec===1?'<span class="tag core">首选</span>':''}<span class="prog">${spos+1} / ${sdeck.length} · 对 ${sok} · 错 ${sbad}</span></div>`, bot;
   if(sstate==='ask'){
     const bl=`<span class="blank">${sHint.checked?esc(x.ans.split(' ').map(w=>w[0]+'_'.repeat(Math.max(0,w.length-1))).join(' ')):'&nbsp;'}</span>`;
-    h+=`<p class="sent">${sentHTML(x.ex,bl)}</p><p class="sent-cn">${esc(x.cn)}</p>
-    <div class="lines"><input id="sans" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="填入空格的词"></div>
-    <div class="actions"><button class="btn primary" id="scheck">检查</button><button class="btn" id="sgive">不会，看答案</button><span class="kbd">回车检查 · 再按回车下一个</span></div>`;
+    top+=`<p class="sent">${sentHTML(x.ex,bl)}</p><p class="sent-cn">${esc(x.cn)}</p>`;
+    bot=`<div class="actions"><button class="btn primary" id="scheck">检查</button><button class="btn" id="sgive">不会，看答案</button><span class="kbd">回车检查 · 再按回车下一个</span></div>`;
   } else {
     const good=slast.good;
-    h+=`<p class="sent">${sentHTML(x.ex,'<span class="filled">'+esc(x.ans)+'</span>')}</p><p class="sent-cn">${esc(x.cn)}</p>
-    <div class="verdict ${good?'ok':'bad'}"><div class="vhead"><span class="mark">${good?'✓ 正确':(slast.got?'✗ 不对':'✗ 没填')}</span><span class="answer">${good?esc(x.ans):diff(x.ans,slast.got)}</span>${(!good&&slast.got)?`<span class="yours">${esc(slast.got)}</span>`:''}</div>
+    top+=`<p class="sent">${sentHTML(x.ex,'<span class="filled">'+esc(x.ans)+'</span>')}</p><p class="sent-cn">${esc(x.cn)}</p>`;
+    bot=`<div class="verdict ${good?'ok':'bad'}"><div class="vhead"><span class="mark">${good?'✓ 正确':(slast.got?'✗ 不对':'✗ 没填')}</span><span class="answer">${good?esc(x.ans):diff(x.ans,slast.got)}</span>${(!good&&slast.got)?`<span class="yours">${esc(slast.got)}</span>`:''}</div>
       <div class="use"><b>${esc(x.w)}</b>　${esc(x.use)}</div>
       <div class="tipbox"><span class="k">区分要点</span>${esc(g.tip)}</div>
       ${(!good&&slast.got)?'<div class="override"><button class="btn ghost" id="sover">我填的也说得通，不算错</button></div>':''}
     </div>
     <div class="actions"><button class="btn primary" id="snext">下一个</button><span class="kbd">回车下一个</span></div>`;
   }
-  h+='</div>'; box.innerHTML=h;
+  fillCard(inp,top,bot,sstate==='show',slast&&slast.got);
   if(sstate==='ask'){
-    const inp=$('#sans');
     $('#scheck').onclick=scheck; $('#sgive').onclick=()=>scheck(true);
-    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();scheck()}});
     if(focus!==false) inp.focus({preventScroll:true});
-  } else {
+  } else { // focus stays in the answer box, as in the word drill
     $('#snext').onclick=snext;
-    const ov=$('#sover'); if(ov) ov.onclick=()=>{sbad--;sok++;slast.good=true;logFix('s',x.gi+':'+x.ii,slast.day);ssave();spaint()};
-    $('#snext').focus({preventScroll:true});
+    const ov=$('#sover'); if(ov) ov.onclick=()=>{sbad--;sok++;slast.good=true;logFix('s',x.gi+':'+x.ii,slast.day);ssave();spaint();inView($('#sdrill .verdict'),$('#snext'))};
   }
 }
+keepFocus($('#sdrill'));
 function scheck(give){
   const x=sdeck[spos]; const got=give===true?'':$('#sans').value;
   if(give!==true&&!got.trim()){$('#sans').focus();return}
@@ -599,8 +631,9 @@ function scheck(give){
   const good=give!==true&&acc.includes(norm(got));
   if(good) sok++; else sbad++;
   slast={got:give===true?'':got.trim(),good,day:give===true?null:logAnswer('s',x.gi+':'+x.ii,good)}; sstate='show'; ssave(); spaint();
+  inView($('#sdrill .verdict'),$('#snext'));
 }
-function snext(){spos++;sstate='ask';slast=null;ssave();spaint()}
+function snext(){spos++;sstate='ask';slast=null;ssave();spaint();const c=$('#sdrill .card');inView(c,$('#sdrill .lines')||c)}
 document.addEventListener('keydown',e=>{ if(e.key==='Enter'&&sstate==='show'&&!$('#p-syn').hidden&&document.activeElement.tagName!=='SELECT'){ if(document.activeElement.id==='sover') return; e.preventDefault(); snext(); } });
 function renderGroups(){
   const sc=sscope.value;
