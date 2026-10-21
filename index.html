@@ -43,10 +43,17 @@ h1{font-family:var(--f-display);font-weight:800;font-size:clamp(26px,5vw,36px);l
 .sync-body ol{margin:0;padding-left:1.3em}
 .sync-body a{color:var(--ink)}
 .sync-body input{font:inherit;font-size:14px;color:var(--ink);background:var(--paper);border:1px solid var(--rule-strong);border-radius:6px;padding:7px 9px;flex:1;min-width:12em}
-.tabs{display:flex;gap:4px;border-bottom:2px solid var(--rule);flex-wrap:wrap}
-.tab{appearance:none;border:0;background:none;color:var(--muted);font:inherit;font-weight:600;padding:8px 14px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px}
+/* the tab strip scrolls sideways when the tabs don't fit; JS sets --fl / --fr to fade whichever edge has tabs scrolled past it.
+   It clips what overflows it, so the base rule is a background line and focus rings sit inside the tab. */
+.tabs{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;--fl:0px;--fr:0px;
+  background:linear-gradient(var(--rule),var(--rule)) left bottom/100% 2px no-repeat;
+  -webkit-mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent);
+  mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent)}
+.tabs::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;color:var(--muted);font:inherit;font-weight:600;padding:8px 14px;cursor:pointer;border-bottom:3px solid transparent;flex:none;white-space:nowrap}
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--red)}
 .tab:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.tab:focus-visible{outline-offset:-3px}
 .panel{display:flex;flex-direction:column;gap:16px}
 .controls{display:flex;flex-direction:column;gap:10px;background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:14px}
 .row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
@@ -162,6 +169,7 @@ td.src.chao{color:var(--red)}
 .lg .n{display:flex;flex-wrap:wrap;gap:2px 16px;font-size:13px;color:var(--muted)}
 .lg .n b{color:var(--ink);font-family:var(--f-word);font-variant-numeric:tabular-nums;font-weight:600}
 @media (max-width:520px){
+  .tab{padding:8px 10px}
   .card{padding:16px 14px}
   .lines input{font-size:24px}
   .kbd{display:none}
@@ -178,7 +186,7 @@ td.src.chao{color:var(--red)}
   td.p,td.c{grid-column:2}
   td.w.cover,td.p.cover,td.c.cover{min-height:1.4em}
 }
-@media (prefers-reduced-motion:no-preference){.verdict{animation:pop .18s ease-out}@keyframes pop{from{transform:translateY(4px);opacity:.6}to{transform:none;opacity:1}}}
+@media (prefers-reduced-motion:no-preference){.tabs{scroll-behavior:smooth}.verdict{animation:pop .18s ease-out}@keyframes pop{from{transform:translateY(4px);opacity:.6}to{transform:none;opacity:1}}}
 </style>
 
 <div class="wrap">
@@ -307,9 +315,18 @@ function segBind(id,key,def,cb){
 }
 
 /* ---------- tabs ---------- */
+const tabsEl=$('.tabs');
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>showTab(t.dataset.tab)));
+function tabEdges(){ // fade an edge of the tab strip while tabs are scrolled past it
+  const x=tabsEl.scrollLeft;
+  tabsEl.style.setProperty('--fl',x>1?'24px':'0px');
+  tabsEl.style.setProperty('--fr',x+tabsEl.clientWidth<tabsEl.scrollWidth-1?'24px':'0px');
+}
+tabsEl.addEventListener('scroll',tabEdges,{passive:true}); addEventListener('resize',tabEdges);
 function showTab(name){
   document.querySelectorAll('.tab').forEach(t=>t.setAttribute('aria-selected',String(t.dataset.tab===name)));
+  const a=$('#t-'+name).getBoundingClientRect(), b=tabsEl.getBoundingClientRect(); // bring the chosen tab clear of the faded edges
+  if(a.left<b.left+24) tabsEl.scrollLeft-=b.left+24-a.left; else if(a.right>b.right-24) tabsEl.scrollLeft+=a.right-b.right+24;
   ['drill','list','syn','wrong','log'].forEach(n=>$('#p-'+n).hidden=n!==name);
   if(name==='list') renderList();
   if(name==='syn') renderGroups();
@@ -456,7 +473,7 @@ function renderList(){
 $('#list').addEventListener('click',e=>{const td=e.target.closest('td.cover');if(td) td.classList.remove('cover')});
 
 /* ---------- wrong book ---------- */
-function updWrongCount(){const n=Object.keys(wrong).length;$('#wrongCount').textContent=n?`(${n})`:''}
+function updWrongCount(){const n=Object.keys(wrong).length;$('#wrongCount').textContent=n?`(${n})`:'';tabEdges()} // the count changes how wide the strip is
 function renderWrong(){
   const items=R.filter(r=>wrong[r.w]).sort((a,b)=>wrong[b.w]-wrong[a.w]||a.id-b.id);
   $('#drillWrong').disabled=!items.length; const cw=$('#clearWrong'); if(cw) cw.disabled=!items.length;
