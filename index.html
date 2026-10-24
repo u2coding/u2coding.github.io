@@ -722,6 +722,13 @@ function reloadState(){
   if(!$('#p-log').hidden) renderLog();
 }
 async function syncOnce(retried){
+  try{await syncStep()}
+  catch(e){ // the gist is gone, or (with another account's token) isn't ours to write: start over as a browser joining
+    if(e.status===404&&!retried&&ss.get('gist')){ss.set('gist',null);ss.set('base',null);return syncOnce(true)}
+    throw e;
+  }
+}
+async function syncStep(){
   if(flushing) await flushing;
   let id=ss.get('gist');
   if(!id&&(id=await findGist())) ss.set('gist',id);
@@ -731,9 +738,7 @@ async function syncOnce(retried){
     const g=await gh('POST','/gists',{description:'写作词汇默写本 · 同步数据（请勿删除）',public:false,files:{[FILE]:{content:JSON.stringify(b)}}});
     ss.set('gist',g.id); ss.set('base',b.t); return;
   }
-  let g;
-  try{g=await gh('GET','/gists/'+id)}
-  catch(e){ if(e.status===404&&!retried){ss.set('gist',null);ss.set('base',null);return syncOnce(true)} throw e }
+  const g=await gh('GET','/gists/'+id);
   let remote=null; try{remote=JSON.parse(g.files[FILE].content)}catch(e){}
   if(!remote||!remote.data){ if(!localT()) ss.set('t',Date.now()); return push() }
   const t=localT(), base=ss.get('base')==null?null:+ss.get('base'), rt=remote.t;
@@ -753,7 +758,7 @@ function sync(){
   running=(async()=>{
     try{ do{rerun=false;await syncOnce()}while(rerun); syncedAt=new Date().toTimeString().slice(0,5); setSync('ok') }
     catch(e){
-      if(e.status===401){['token','gist','base'].forEach(k=>ss.set(k,null));syncState='bad';renderSync()}
+      if(e.status===401){ss.set('token',null);syncState='bad';renderSync()}
       else {setSync('fail');retryTimer=setTimeout(sync,30000)}
     }
     finally{running=null}
@@ -777,10 +782,11 @@ function paintSyncState(){
 function renderSync(){
   const box=$('#syncBody');
   if(ss.get('token')){
-    box.innerHTML=`<div>已连接到你 GitHub 账号下的私有 Gist。打开页面或切回这个标签页时自动拉取，练习时自动上传。</div>
+    box.innerHTML=`<div>已连接到你 GitHub 账号下的私有 Gist。打开页面或切回这个标签页时自动拉取，练习时自动上传。关闭同步期间在这个浏览器里练的内容，重新开启后会上传，不会丢。</div>
       <div class="row"><button class="btn" id="syncNow">立即同步</button><button class="btn ghost" id="syncOff">关闭同步</button></div>`;
     $('#syncNow').onclick=()=>sync();
-    $('#syncOff').onclick=()=>{clearTimeout(pushTimer);clearTimeout(retryTimer);['token','gist','base'].forEach(k=>ss.set(k,null));syncState='';renderSync()};
+    // only the token goes: gist and base stay, so turning sync back on uploads what was practised meanwhile instead of rejoining
+    $('#syncOff').onclick=()=>{clearTimeout(pushTimer);clearTimeout(retryTimer);ss.set('token',null);syncState='';renderSync()};
   } else {
     box.innerHTML=`<div>把错词本、练习进度和练习记录存进你 GitHub 账号下的一个私有 Gist。每个浏览器填一次令牌，之后自动同步。</div>
       <ol><li>打开 <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=%E5%86%99%E4%BD%9C%E8%AF%8D%E6%B1%87%E9%BB%98%E5%86%99%E6%9C%AC" target="_blank" rel="noopener">GitHub · 新建令牌</a>（已勾好 gist 权限），有效期建议选长一些或 No expiration，点 Generate token 后复制。</li>
@@ -790,7 +796,7 @@ function renderSync(){
     const inp=$('#syncToken');
     $('#syncOn').onclick=()=>{
       const tok=inp.value.trim(); if(!tok){inp.focus();return}
-      ss.set('token',tok); ss.set('gist',null); ss.set('base',null); renderSync(); sync();
+      ss.set('token',tok); renderSync(); sync();
     };
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();$('#syncOn').click()}});
   }
