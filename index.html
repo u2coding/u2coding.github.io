@@ -52,7 +52,7 @@ h1{font-family:var(--f-display);font-weight:800;font-size:clamp(26px,5vw,36px);l
 .tabs::-webkit-scrollbar{display:none}
 .tab{appearance:none;border:0;background:none;color:var(--muted);font:inherit;font-weight:600;padding:8px 14px;cursor:pointer;border-bottom:3px solid transparent;flex:none;white-space:nowrap}
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--red)}
-.tab:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.tab:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--red);outline-offset:2px}
 .tab:focus-visible{outline-offset:-3px}
 .panel{display:flex;flex-direction:column;gap:16px}
 .controls{display:flex;flex-direction:column;gap:10px;background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:14px}
@@ -90,6 +90,7 @@ select{font:inherit;font-size:14px;color:var(--ink);background:var(--paper);bord
   font-family:var(--f-word);font-size:30px;line-height:1;padding:12px 12px 22px;letter-spacing:.04em;caret-color:var(--red)}
 .lines input:focus{outline:none}
 .lines.shown input{caret-color:transparent}
+.card.hw .lines{display:none} /* handwriting: the answer goes on paper, so no box and no phone keyboard */
 .lines:focus-within{box-shadow:0 0 0 2px var(--rule-strong)}
 .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .kbd{font-size:12px;color:var(--faint);margin-left:auto}
@@ -160,6 +161,15 @@ td.src.chao{color:var(--red)}
 .tips ol{margin:6px 0 0;padding-left:1.3em;display:flex;flex-direction:column;gap:4px}
 .tips b{color:var(--ink)}
 .confirm{display:inline-flex;gap:8px;align-items:center;font-size:13px;color:var(--red)}
+textarea{font:inherit;font-size:14px;line-height:1.6;color:var(--ink);background:var(--paper);border:1px solid var(--rule-strong);border-radius:6px;padding:8px 10px;width:100%;resize:vertical}
+textarea.keybox{font-size:13px}
+.note{font-size:13px;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{background:var(--chip);border-radius:4px;padding:2px 8px;font-size:13px;color:var(--muted)}
+.chip b{font-family:var(--f-word);color:var(--ink);margin-right:4px}
+.chip.new b{color:var(--red)}
+#importMsg:empty{display:none}
+#importMsg{background:var(--ok-soft);border-radius:8px;padding:10px 12px;font-size:14px}
 /* practice log */
 .lg{display:grid;grid-template-columns:9em minmax(0,1fr);gap:4px 14px;padding:10px 14px;border-bottom:1px solid var(--rule);align-items:center}
 .lg:last-child{border-bottom:0}
@@ -221,6 +231,7 @@ td.src.chao{color:var(--red)}
         <label class="chk"><input type="checkbox" id="optHint" checked> 首字母提示</label>
         <label class="chk"><input type="checkbox" id="optShuffle" checked> 打乱顺序</label>
         <label class="chk"><input type="checkbox" id="optWrongOnly"> 只练错词</label>
+        <label class="chk"><input type="checkbox" id="optHw"> 手写模式</label>
         <button class="btn" id="restart" style="margin-left:auto">重新开始</button>
       </div>
     </div>
@@ -232,6 +243,7 @@ td.src.chao{color:var(--red)}
         <li>再按“图表数据”“应用文”这类题型词，以及你常练的话题刷“全部”。</li>
         <li>每个词看一眼搭配，最好当场用它造个句子。阅卷时拼错、用错比只用简单词更扣分。</li>
         <li>隔天先练“错词本”，清空了再练新词。</li>
+        <li>想练手写就勾 <b>手写模式</b>：在纸上写，点“下一个”往下翻。写完点“复制本轮题目”，连同纸的照片发给 AI 批改，再把它找出的错词粘贴到错词本的“导入错词”里。</li>
       </ol>
     </div>
   </section>
@@ -254,9 +266,11 @@ td.src.chao{color:var(--red)}
       <div class="row"><span class="lbl">选项</span>
         <label class="chk"><input type="checkbox" id="sHint" checked> 首字母提示</label>
         <label class="chk"><input type="checkbox" id="sRec"> 只练首选词</label>
+        <label class="chk"><input type="checkbox" id="sWrongOnly"> 只练错词</label>
+        <label class="chk"><input type="checkbox" id="sHw"> 手写模式</label>
         <button class="btn" id="sRestart" style="margin-left:auto">重新开始</button>
       </div>
-      <div class="row" style="font-size:12px;color:var(--muted)">看例句填空。同一组词意思差不多，该填哪个要看它后面接什么、放在句子哪个位置。每组的“区分要点”就是最常考的用法差别。“首选”是这组里最该先练熟的词。</div>
+      <div class="row" style="font-size:12px;color:var(--muted)">看例句填空。同一组词意思差不多，该填哪个要看它后面接什么、放在句子哪个位置。每组的“区分要点”就是最常考的用法差别。“首选”是这组里最该先练熟的词。勾“只练错词”时练错词本里的近义词，不管范围和首选。</div>
     </div>
     <div id="sdrill"></div>
     <div id="sgroups" class="sgroups"></div>
@@ -265,8 +279,17 @@ td.src.chao{color:var(--red)}
   <section class="panel" id="p-wrong" hidden>
     <div class="row">
       <button class="btn primary" id="drillWrong">练这些错词</button>
+      <button class="btn" id="drillSynWrong" hidden>练近义词错词</button>
+      <button class="btn" id="importOpen">导入错词</button>
       <span id="clearBox"><button class="btn ghost" id="clearWrong">清空错词本</button></span>
     </div>
+    <div class="controls" id="importBox" hidden>
+      <div class="note">把 AI 批改出的错词粘贴到下面：每行一个，或用逗号、顿号隔开都行，序号、中文释义会自动忽略。已经在错词本里的词，错误次数加 1。</div>
+      <textarea id="importText" rows="6" aria-label="要导入的错词" placeholder="例如：&#10;3. obtain&#10;7. according to 根据"></textarea>
+      <div class="row"><label class="btn">选择文件<input type="file" id="importFile" accept=".txt,.csv,.tsv,.md,text/plain" hidden></label><button class="btn primary" id="importParse">识别</button><button class="btn ghost" id="importCancel">取消</button></div>
+      <div id="importPreview" class="panel" style="gap:8px"></div>
+    </div>
+    <div id="importMsg" role="status"></div>
     <div id="wrong"></div>
   </section>
 
@@ -340,8 +363,9 @@ function showTab(name){
 const scopeSel=$('#scope'); scopeSel.value=store.get('scope','all'); if(!scopeSel.value) scopeSel.value='all';
 const getLvl=segBind('#lvl','lvl','1',()=>start());
 const getSrc=segBind('#src','src','all',()=>start());
-const optHint=$('#optHint'), optShuffle=$('#optShuffle'), optWrong=$('#optWrongOnly');
-optHint.checked=store.get('hint',true); optShuffle.checked=store.get('shuffle',true);
+const optHint=$('#optHint'), optShuffle=$('#optShuffle'), optWrong=$('#optWrongOnly'), optHw=$('#optHw');
+optHint.checked=store.get('hint',true); optShuffle.checked=store.get('shuffle',true); optHw.checked=store.get('hw',false);
+optHw.addEventListener('change',()=>{store.set('hw',optHw.checked);paint()});
 scopeSel.addEventListener('change',()=>{store.set('scope',scopeSel.value);start()});
 optHint.addEventListener('change',()=>{store.set('hint',optHint.checked);paint()});
 optShuffle.addEventListener('change',()=>{store.set('shuffle',optShuffle.checked);start()});
@@ -354,9 +378,9 @@ function restoreFilters(){
 }
 function exitWrong(){optWrong.checked=false;restoreFilters();start()}
 
-let deck=[],pos=0,ok=0,bad=0,state='ask',last=null;
+let deck=[],pos=0,ok=0,bad=0,state='ask',last=null,hand={}; // hand[id]: 'h' written on paper in handwriting mode, 'g' given up there
 // the round in progress (word order, position, score, filters it was built from) is saved so a refresh picks up where it left off
-function save(){store.set('round',{ids:deck.map(r=>r.id),pos,ok,bad,state,last,wo:optWrong.checked,sc:scopeSel.value,lvl:getLvl(),src:getSrc()})}
+function save(){store.set('round',{ids:deck.map(r=>r.id),pos,ok,bad,state,last,hand,wo:optWrong.checked,sc:scopeSel.value,lvl:getLvl(),src:getSrc()})}
 function resume(){
   const s=store.get('round',null);
   if(!s||!Array.isArray(s.ids)||typeof s.lvl!=='string'||typeof s.src!=='string') return false;
@@ -364,7 +388,7 @@ function resume(){
   const d=s.ids.map(id=>byId[id]); if(!d.length||!d.every(Boolean)) return false;
   optWrong.checked=!!s.wo; scopeSel.value=s.sc; if(!scopeSel.value) scopeSel.value='all';
   getLvl.set(s.lvl); getSrc.set(s.src);
-  deck=d; pos=Math.min(s.pos|0,deck.length); ok=s.ok|0; bad=s.bad|0;
+  deck=d; pos=Math.min(s.pos|0,deck.length); ok=s.ok|0; bad=s.bad|0; hand=s.hand&&typeof s.hand==='object'?s.hand:{};
   state=s.state==='show'&&s.last&&pos<deck.length?'show':'ask'; last=state==='show'?s.last:null;
   paint(true); return true;
 }
@@ -375,7 +399,7 @@ function pool(){
 function start(){
   deck=pool().slice();
   if(optShuffle.checked){for(let i=deck.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[deck[i],deck[j]]=[deck[j],deck[i]]}}
-  pos=0;ok=0;bad=0;state='ask';last=null;save();paint(true);
+  pos=0;ok=0;bad=0;state='ask';last=null;hand={};save();paint(true);
 }
 function norm(s){return s.toLowerCase().replace(/[’']/g,"'").replace(/\s+/g,' ').trim()}
 function accepted(r){return [r.w,...r.alt].map(norm)}
@@ -425,10 +449,12 @@ function paint(focus){
     return;
   }
   if(pos>=deck.length){
-    const tot=ok+bad, rate=tot?Math.round(ok*100/tot):0;
-    box.innerHTML=`<div class="card done"><div class="big">${ok} / ${tot}</div><div>正确率 ${rate}%${bad?`，有 ${bad} 个词进了错词本`:'，全部拼对'}</div>
-      <div class="actions" style="justify-content:center"><button class="btn primary" id="again">再来一轮</button>${optWrong.checked?'<button class="btn" id="exitWrong">退出错词练习</button>':bad?'<button class="btn" id="goWrong">只练错词</button>':''}</div></div>`;
+    const tot=ok+bad, rate=tot?Math.round(ok*100/tot):0, nk=Object.keys(hand).length, nh=Object.values(hand).filter(v=>v==='h').length;
+    box.innerHTML=`<div class="card done">${nk?`<div class="big">${nh}</div><div>本轮手写 ${nh} 个词${tot?`；在线作答 ${tot} 个，对 ${ok} 个`:''}${bad?`，${bad} 个进了错词本`:''}。把纸上的答案和题目清单发给 AI 批改，再到错词本里导入错词。</div>`
+      :`<div class="big">${ok} / ${tot}</div><div>正确率 ${rate}%${bad?`，有 ${bad} 个词进了错词本`:'，全部拼对'}</div>`}
+      <div class="actions" style="justify-content:center">${nk?'<button class="btn primary" id="copyKey">复制本轮题目</button><button class="btn" id="goImport">去导入错词</button>':''}<button class="btn${nk?'':' primary'}" id="again">再来一轮</button>${optWrong.checked?'<button class="btn" id="exitWrong">退出错词练习</button>':bad?'<button class="btn" id="goWrong">只练错词</button>':''}</div></div>`;
     $('#again').onclick=()=>start();
+    if(nk){$('#copyKey').onclick=()=>copyKey('w',$('#copyKey'));$('#goImport').onclick=openImport}
     if(optWrong.checked) $('#exitWrong').onclick=exitWrong;
     else if(bad) $('#goWrong').onclick=()=>{optWrong.checked=true;start()};
     return;
@@ -439,12 +465,15 @@ function paint(focus){
     inp.addEventListener('input',()=>{if(state==='show') inp.value=last.got});
   });
   if(inp.deck!==deck||inp.pos!==pos){inp.deck=deck;inp.pos=pos;inp.value=''} // a new word
-  const top=`<div class="meta"><span class="tag">${esc(c.name)}</span>${r.p===1?'<span class="tag core">★ 核心</span>':''}<span class="tag ${r.src==='超'?'chao':''}">${esc(srcLabel(r))}</span><span class="prog">${pos+1} / ${deck.length} · 对 ${ok} · 错 ${bad}</span></div>
+  const hw=optHw.checked, copyBtn=hw&&Object.keys(hand).length?'<button class="btn ghost" id="copyKey">复制已写题目</button>':'';
+  inp.closest('.card').classList.toggle('hw',hw);
+  const top=`<div class="meta"><span class="tag">${esc(c.name)}</span>${r.p===1?'<span class="tag core">★ 核心</span>':''}<span class="tag ${r.src==='超'?'chao':''}">${esc(srcLabel(r))}</span><span class="prog">${pos+1} / ${deck.length}${hw?'':` · 对 ${ok} · 错 ${bad}`}</span></div>
   <p class="prompt">${promptHTML(state==='ask'?r.q:r.prompt)}</p>
   <div class="hint">${optHint.checked?esc(hintOf(r.w))+`　(${letters(r.w)})`:''}</div>`;
   let bot;
   if(state==='ask'){
-    bot=`<div class="actions"><button class="btn primary" id="check">检查</button><button class="btn" id="giveup">不会，看答案</button><span class="kbd">回车检查 · 再按回车下一个</span></div>`;
+    bot=hw?`<div class="actions"><button class="btn primary" id="hwnext">下一个</button><button class="btn" id="giveup">不会，看答案</button>${copyBtn}<span class="kbd">回车下一个</span></div>`
+      :`<div class="actions"><button class="btn primary" id="check">检查</button><button class="btn" id="giveup">不会，看答案</button><span class="kbd">回车检查 · 再按回车下一个</span></div>`;
   } else {
     const good=last.good;
     bot=`<div class="verdict ${good?'ok':'bad'}"><div class="vhead"><span class="mark">${good?'✓ 正确':(last.got?'✗ 拼错了':'✗ 没写出来')}</span><span class="answer">${good?esc(r.w):diff(r.w,last.got)}</span>${(!good&&last.got)?`<span class="yours">${esc(last.got)}</span>`:''}</div>
@@ -453,10 +482,14 @@ function paint(focus){
       ${r.book?`<div class="book">书中释义：${esc(r.book)}</div>`:''}
       ${(!good&&last.got)?'<div class="override"><button class="btn ghost" id="override">我写的也对（如英美拼写差异），不算错</button></div>':''}
     </div>
-    <div class="actions"><button class="btn primary" id="next">下一个</button><span class="kbd">回车下一个</span></div>`;
+    <div class="actions"><button class="btn primary" id="next">下一个</button>${copyBtn}<span class="kbd">回车下一个</span></div>`;
   }
   fillCard(inp,top,bot,state==='show',last&&last.got);
-  if(state==='ask'){
+  const ck=$('#copyKey'); if(ck) ck.onclick=()=>copyKey('w',ck);
+  if(state==='ask'&&hw){
+    $('#hwnext').onclick=hwNext; $('#giveup').onclick=()=>check(true);
+    if(focus!==false) $('#hwnext').focus({preventScroll:true}); // a button, so no phone keyboard; Enter on a real keyboard presses it
+  } else if(state==='ask'){
     $('#check').onclick=check; $('#giveup').onclick=()=>check(true);
     if(focus!==false) inp.focus({preventScroll:true});
   } else { // focus stays in the answer box, so the keyboard stays up and its Enter key goes on to the next word
@@ -470,10 +503,16 @@ function check(give){
   if(give!==true&&!got.trim()){ $('#ans').focus(); return; }
   const good=give!==true&&accepted(r).includes(norm(got));
   if(good) ok++; else {bad++; wrong[r.w]=(wrong[r.w]||0)+1; store.set('wrong',wrong); updWrongCount()}
+  if(give===true&&optHw.checked) hand[r.id]='g';
   last={got:give===true?'':got.trim(),good,day:give===true?null:logAnswer('w',r.id,good)}; state='show'; save(); paint();
   inView($('#drill .verdict'),$('#next'));
 }
 function next(){pos++;state='ask';last=null;save();paint();const c=$('#drill .card');inView(c,$('#drill .lines')||c)}
+// handwriting: nothing to mark here, so the word only counts as practised (as right); 导入错词 brings back the ones the paper got wrong
+function hwNext(){const r=deck[pos]; hand[r.id]='h'; logAnswer('w',r.id,true); next()}
+document.addEventListener('keydown',e=>{ // Enter goes on in handwriting mode even after 下一个 has lost focus
+  if(e.key==='Enter'&&state==='ask'&&optHw.checked&&deck[pos]&&!$('#p-drill').hidden&&!/^(BUTTON|INPUT|SELECT|TEXTAREA|A|SUMMARY)$/.test(document.activeElement.tagName)){e.preventDefault();hwNext()}
+});
 document.addEventListener('keydown',e=>{ if(e.key==='Enter'&&state==='show'&&!$('#p-drill').hidden&&document.activeElement.tagName!=='SELECT'){ if(document.activeElement.id==='override') return; e.preventDefault(); next(); } });
 
 /* ---------- list ---------- */
@@ -504,11 +543,14 @@ $('#list').addEventListener('click',e=>{const td=e.target.closest('td.cover');if
 
 /* ---------- wrong book ---------- */
 function updWrongCount(){const n=Object.keys(wrong).length;$('#wrongCount').textContent=n?`(${n})`:'';tabEdges()} // the count changes how wide the strip is
-function renderWrong(){
-  const items=R.filter(r=>wrong[r.w]).sort((a,b)=>wrong[b.w]-wrong[a.w]||a.id-b.id);
-  $('#drillWrong').disabled=!items.length; const cw=$('#clearWrong'); if(cw) cw.disabled=!items.length;
-  $('#wrong').innerHTML=items.length?`<div class="wrong-list">${items.map(r=>`<div class="wl"><div><span class="w">${esc(r.w)}</span>　<span class="p">${esc(r.prompt)}</span><div class="p">${esc(r.col)}　${esc(r.colcn)}</div></div><span class="n">错 ${wrong[r.w]} 次</span></div>`).join('')}</div>`
-    :'<div class="empty">错词本是空的。在“默写”里拼错或点“不会”的词会自动收进来。</div>';
+function renderWrong(){ // word-list words, then words only the synonym drill uses (shown with their sentence), most misses first
+  const items=R.filter(r=>wrong[r.w]).map(r=>({n:wrong[r.w],o:r.id,h:`<span class="w">${esc(r.w)}</span>　<span class="p">${esc(r.prompt)}</span><div class="p">${esc(r.col)}　${esc(r.colcn)}</div>`}))
+    .concat(Object.keys(SYNW).filter(k=>wrong[k]).map(k=>{const x=SYNW[k];return {n:wrong[k],o:1e5+x.gi*100+x.ii,h:`<span class="w">${esc(k)}</span>　<span class="p">${esc(x.use)}</span><div class="p">${sentHTML(x.ex,'<b>'+esc(x.ans)+'</b>')}　${esc(x.cn)}</div><div class="p">近义词 · ${sid(x.gi)} ${esc(SYN[x.gi].t)}</div>`}}))
+    .sort((a,b)=>b.n-a.n||a.o-b.o);
+  $('#drillWrong').disabled=!R.some(r=>wrong[r.w]); $('#drillSynWrong').hidden=!SI.some(x=>wrong[skey(x)]);
+  const cw=$('#clearWrong'); if(cw) cw.disabled=!items.length;
+  $('#wrong').innerHTML=items.length?`<div class="wrong-list">${items.map(it=>`<div class="wl"><div>${it.h}</div><span class="n">错 ${it.n} 次</span></div>`).join('')}</div>`
+    :'<div class="empty">错词本是空的。在“默写”或“近义词辨析”里答错、点“不会”的词会自动收进来；手写的错词可以用“导入错词”加进来。</div>';
 }
 $('#drillWrong').addEventListener('click',()=>{optWrong.checked=true;scopeSel.value='all';getLvl.set('0');getSrc.set('all');showTab('drill');start()});
 function askClear(){
@@ -560,38 +602,58 @@ const SYN=D.syn||[];
 const SI=[]; SYN.forEach((g,gi)=>g.items.forEach((it,ii)=>SI.push(Object.assign({gi,ii},it))));
 const sscope=$('#sscope');
 sscope.innerHTML='<option value="all">全部 '+SYN.length+' 组（'+SI.length+' 句）</option>'+SYN.map((g,gi)=>`<option value="${gi}">S${String(gi+1).padStart(2,'0')} ${esc(g.t)}（${g.items.length}）</option>`).join('');
-const sHint=$('#sHint'), sRec=$('#sRec');
+const sHint=$('#sHint'), sRec=$('#sRec'), sWrong=$('#sWrongOnly'), sHw=$('#sHw');
 sscope.value=store.get('sscope','all'); if(!sscope.value) sscope.value='all';
-sHint.checked=store.get('shint',true); sRec.checked=store.get('srec',false);
+sHint.checked=store.get('shint',true); sRec.checked=store.get('srec',false); sHw.checked=store.get('shw',false);
+sWrong.addEventListener('change',()=>sstart());
+sHw.addEventListener('change',()=>{store.set('shw',sHw.checked);spaint()});
 sscope.addEventListener('change',()=>{store.set('sscope',sscope.value);sstart();renderGroups()});
 sHint.addEventListener('change',()=>{store.set('shint',sHint.checked);spaint()});
 sRec.addEventListener('change',()=>{store.set('srec',sRec.checked);sstart()});
 $('#sRestart').addEventListener('click',()=>sstart());
-let sdeck=[],spos=0,sok=0,sbad=0,sstate='ask',slast=null;
+let sdeck=[],spos=0,sok=0,sbad=0,sstate='ask',slast=null,shand={};
 // like the word drill, the round in progress is saved so a refresh picks up where it left off
-function ssave(){store.set('sround',{ids:sdeck.map(x=>x.gi+':'+x.ii),pos:spos,ok:sok,bad:sbad,state:sstate,last:slast})}
+function ssave(){store.set('sround',{ids:sdeck.map(x=>x.gi+':'+x.ii),pos:spos,ok:sok,bad:sbad,state:sstate,last:slast,hand:shand,wo:sWrong.checked})}
 function sresume(){
   const s=store.get('sround',null); if(!s||!Array.isArray(s.ids)) return false;
   const byKey={}; SI.forEach(x=>byKey[x.gi+':'+x.ii]=x);
   const d=s.ids.map(k=>byKey[k]); if(!d.length||!d.every(Boolean)) return false;
-  sdeck=d; spos=Math.min(s.pos|0,sdeck.length); sok=s.ok|0; sbad=s.bad|0;
+  sdeck=d; spos=Math.min(s.pos|0,sdeck.length); sok=s.ok|0; sbad=s.bad|0; shand=s.hand&&typeof s.hand==='object'?s.hand:{}; sWrong.checked=!!s.wo;
   sstate=s.state==='show'&&s.last&&spos<sdeck.length?'show':'ask'; slast=sstate==='show'?s.last:null;
   spaint(false); return true;
 }
 function sstart(){
   const sc=sscope.value;
-  sdeck=SI.filter(x=>(sc==='all'||String(x.gi)===sc)&&(!sRec.checked||x.rec===1));
+  sdeck=SI.filter(x=>sWrong.checked?wrong[skey(x)]:(sc==='all'||String(x.gi)===sc)&&(!sRec.checked||x.rec===1)); // wrong-only takes every group
   for(let i=sdeck.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[sdeck[i],sdeck[j]]=[sdeck[j],sdeck[i]]}
-  spos=0;sok=0;sbad=0;sstate='ask';slast=null;ssave();spaint(false);
+  spos=0;sok=0;sbad=0;sstate='ask';slast=null;shand={};ssave();spaint(false);
 }
+// wrong-book keys: a word-list word (or one of its alternative spellings) is kept under its word-list spelling, a word only the
+// synonym drill uses under its own; SYNW holds the first sentence using each of the latter, to show it in the wrong book
+const RW={}; R.forEach(r=>RW[r.w]=r);
+const KEY={}; R.forEach(r=>[r.w,...r.alt].forEach(w=>{const n=norm(w); if(!KEY[n]) KEY[n]=r.w}));
+const SYNW={}; SI.forEach(x=>{const n=norm(x.w); if(!KEY[n]) KEY[n]=x.w; const k=KEY[n]; if(!RW[k]&&!SYNW[k]) SYNW[k]=x});
+SI.forEach(x=>{const n=norm(x.ans); if(!KEY[n]) KEY[n]=KEY[norm(x.w)]}); // the form the sentence takes, e.g. “increased”
+function skey(x){return KEY[norm(x.w)]}
+function sid(gi){return 'S'+String(gi+1).padStart(2,'0')}
 function sentHTML(ex,inner){return esc(ex).replace(/\{[^}]*\}/,inner)}
 function spaint(focus){
   const box=$('#sdrill');
-  if(!sdeck.length){box.innerHTML='<div class="empty">这个范围里没有句子，换个范围试试。</div>';return}
+  const exitBtn=sWrong.checked?'<button class="btn" id="sexitWrong">退出错词练习</button>':'';
+  if(!sdeck.length){
+    box.innerHTML=`<div class="empty">${sWrong.checked?`错词本里还没有近义词。在这里答错、或从错词本导入的近义词会收进来。<div class="actions" style="justify-content:center;margin-top:10px">${exitBtn}</div>`:'这个范围里没有句子，换个范围试试。'}</div>`;
+    if(sWrong.checked) $('#sexitWrong').onclick=()=>{sWrong.checked=false;sstart()};
+    return;
+  }
   if(spos>=sdeck.length){
-    const tot=sok+sbad;
-    box.innerHTML=`<div class="card done"><div class="big">${sok} / ${tot}</div><div>正确率 ${tot?Math.round(sok*100/tot):0}%</div><div class="actions" style="justify-content:center"><button class="btn primary" id="sagain">再来一轮</button></div></div>`;
-    $('#sagain').onclick=()=>sstart(); return;
+    const tot=sok+sbad, nk=Object.keys(shand).length, nh=Object.values(shand).filter(v=>v==='h').length;
+    box.innerHTML=`<div class="card done">${nk?`<div class="big">${nh}</div><div>本轮手写 ${nh} 句${tot?`；在线作答 ${tot} 句，对 ${sok} 句`:''}。把纸上的答案和题目清单发给 AI 批改，再到错词本里导入错词。</div>`
+      :`<div class="big">${sok} / ${tot}</div><div>正确率 ${tot?Math.round(sok*100/tot):0}%</div>`}
+      <div class="actions" style="justify-content:center">${nk?'<button class="btn primary" id="scopyKey">复制本轮题目</button><button class="btn" id="sgoImport">去导入错词</button>':''}<button class="btn${nk?'':' primary'}" id="sagain">再来一轮</button>${exitBtn}</div></div>`;
+    $('#sagain').onclick=()=>sstart();
+    if(nk){$('#scopyKey').onclick=()=>copyKey('s',$('#scopyKey'));$('#sgoImport').onclick=openImport}
+    if(sWrong.checked) $('#sexitWrong').onclick=()=>{sWrong.checked=false;sstart()};
+    return;
   }
   const x=sdeck[spos], g=SYN[x.gi];
   const inp=answerCard(box,'sans','填入空格的词',inp=>{
@@ -599,11 +661,14 @@ function spaint(focus){
     inp.addEventListener('input',()=>{if(sstate==='show') inp.value=slast.got});
   });
   if(inp.deck!==sdeck||inp.pos!==spos){inp.deck=sdeck;inp.pos=spos;inp.value=''} // a new sentence
-  let top=`<div class="meta"><span class="tag">S${String(x.gi+1).padStart(2,'0')} ${esc(g.t)}</span>${x.rec===1?'<span class="tag core">首选</span>':''}<span class="prog">${spos+1} / ${sdeck.length} · 对 ${sok} · 错 ${sbad}</span></div>`, bot;
+  const hw=sHw.checked, copyBtn=hw&&Object.keys(shand).length?'<button class="btn ghost" id="scopyKey">复制已写题目</button>':'';
+  inp.closest('.card').classList.toggle('hw',hw);
+  let top=`<div class="meta"><span class="tag">S${String(x.gi+1).padStart(2,'0')} ${esc(g.t)}</span>${x.rec===1?'<span class="tag core">首选</span>':''}<span class="prog">${spos+1} / ${sdeck.length}${hw?'':` · 对 ${sok} · 错 ${sbad}`}</span></div>`, bot;
   if(sstate==='ask'){
     const bl=`<span class="blank">${sHint.checked?esc(x.ans.split(' ').map(w=>w[0]+'_'.repeat(Math.max(0,w.length-1))).join(' ')):'&nbsp;'}</span>`;
     top+=`<p class="sent">${sentHTML(x.ex,bl)}</p><p class="sent-cn">${esc(x.cn)}</p>`;
-    bot=`<div class="actions"><button class="btn primary" id="scheck">检查</button><button class="btn" id="sgive">不会，看答案</button><span class="kbd">回车检查 · 再按回车下一个</span></div>`;
+    bot=hw?`<div class="actions"><button class="btn primary" id="shwnext">下一个</button><button class="btn" id="sgive">不会，看答案</button>${copyBtn}<span class="kbd">回车下一个</span></div>`
+      :`<div class="actions"><button class="btn primary" id="scheck">检查</button><button class="btn" id="sgive">不会，看答案</button><span class="kbd">回车检查 · 再按回车下一个</span></div>`;
   } else {
     const good=slast.good;
     top+=`<p class="sent">${sentHTML(x.ex,'<span class="filled">'+esc(x.ans)+'</span>')}</p><p class="sent-cn">${esc(x.cn)}</p>`;
@@ -612,15 +677,19 @@ function spaint(focus){
       <div class="tipbox"><span class="k">区分要点</span>${esc(g.tip)}</div>
       ${(!good&&slast.got)?'<div class="override"><button class="btn ghost" id="sover">我填的也说得通，不算错</button></div>':''}
     </div>
-    <div class="actions"><button class="btn primary" id="snext">下一个</button><span class="kbd">回车下一个</span></div>`;
+    <div class="actions"><button class="btn primary" id="snext">下一个</button>${copyBtn}<span class="kbd">回车下一个</span></div>`;
   }
   fillCard(inp,top,bot,sstate==='show',slast&&slast.got);
-  if(sstate==='ask'){
+  const ck=$('#scopyKey'); if(ck) ck.onclick=()=>copyKey('s',ck);
+  if(sstate==='ask'&&hw){
+    $('#shwnext').onclick=shwNext; $('#sgive').onclick=()=>scheck(true);
+    if(focus!==false) $('#shwnext').focus({preventScroll:true});
+  } else if(sstate==='ask'){
     $('#scheck').onclick=scheck; $('#sgive').onclick=()=>scheck(true);
     if(focus!==false) inp.focus({preventScroll:true});
   } else { // focus stays in the answer box, as in the word drill
     $('#snext').onclick=snext;
-    const ov=$('#sover'); if(ov) ov.onclick=()=>{sbad--;sok++;slast.good=true;logFix('s',x.gi+':'+x.ii,slast.day);ssave();spaint();inView($('#sdrill .verdict'),$('#snext'))};
+    const ov=$('#sover'); if(ov) ov.onclick=()=>{const k=skey(x); if(wrong[k]){wrong[k]--; if(wrong[k]<=0) delete wrong[k]; store.set('wrong',wrong)} sbad--;sok++;slast.good=true;logFix('s',x.gi+':'+x.ii,slast.day);ssave();updWrongCount();spaint();inView($('#sdrill .verdict'),$('#snext'))};
   }
 }
 keepFocus($('#sdrill'));
@@ -629,11 +698,16 @@ function scheck(give){
   if(give!==true&&!got.trim()){$('#sans').focus();return}
   const acc=[x.ans,x.w,...(x.alt?x.alt.split(','):[])].map(norm);
   const good=give!==true&&acc.includes(norm(got));
-  if(good) sok++; else sbad++;
+  if(good) sok++; else {sbad++; const k=skey(x); wrong[k]=(wrong[k]||0)+1; store.set('wrong',wrong); updWrongCount()}
+  if(give===true&&sHw.checked) shand[x.gi+':'+x.ii]='g';
   slast={got:give===true?'':got.trim(),good,day:give===true?null:logAnswer('s',x.gi+':'+x.ii,good)}; sstate='show'; ssave(); spaint();
   inView($('#sdrill .verdict'),$('#snext'));
 }
 function snext(){spos++;sstate='ask';slast=null;ssave();spaint();const c=$('#sdrill .card');inView(c,$('#sdrill .lines')||c)}
+function shwNext(){const k=sdeck[spos].gi+':'+sdeck[spos].ii; shand[k]='h'; logAnswer('s',k,true); snext()} // as hwNext
+document.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&sstate==='ask'&&sHw.checked&&sdeck[spos]&&!$('#p-syn').hidden&&!/^(BUTTON|INPUT|SELECT|TEXTAREA|A|SUMMARY)$/.test(document.activeElement.tagName)){e.preventDefault();shwNext()}
+});
 document.addEventListener('keydown',e=>{ if(e.key==='Enter'&&sstate==='show'&&!$('#p-syn').hidden&&document.activeElement.tagName!=='SELECT'){ if(document.activeElement.id==='sover') return; e.preventDefault(); snext(); } });
 function renderGroups(){
   const sc=sscope.value;
@@ -645,6 +719,75 @@ function renderGroups(){
   }).join('');
 }
 $('#sgroups').addEventListener('click',e=>{const b=e.target.closest('button[data-g]');if(!b)return;sscope.value=b.dataset.g;store.set('sscope',sscope.value);sstart();renderGroups();$('#sdrill').scrollIntoView({behavior:'smooth',block:'start'});setTimeout(()=>{const i=$('#sans');if(i)i.focus({preventScroll:true})},300)});
+
+/* ---------- handwriting: answer key, importing wrong words ---------- */
+function keyText(kind){ // the round's handwritten (and given-up) questions, numbered as on the cards, with their answers, for whoever marks the paper
+  const w=kind==='w', dk=w?deck:sdeck, hd=w?hand:shand, lines=[];
+  dk.forEach((x,i)=>{
+    const m=hd[w?x.id:x.gi+':'+x.ii]; if(!m) return;
+    lines.push(`${i+1}. `+(w?`${x.q} —— ${x.w}${x.alt.length?`（也可写作 ${x.alt.join('、')}）`:''}`:`${x.ex.replace(/\{[^}]*\}/,'____')}（${x.cn}）—— ${x.ans}`)+(m==='g'?'（不会，已记入错词本）':''));
+  });
+  return {n:lines.length,text:`写作词汇默写本 · ${w?'默写':'近义词辨析'}手写题目和答案（${lines.length} 题）\n${lines.join('\n')}`};
+}
+function copyKey(kind,btn){
+  const {n,text}=keyText(kind), label=btn.textContent;
+  const manual=()=>{ // no clipboard access: put the text where it can be copied by hand
+    let ta=btn.parentNode.nextElementSibling;
+    if(!ta||!ta.classList.contains('keybox')){ta=document.createElement('textarea');ta.className='keybox';ta.readOnly=true;ta.rows=8;ta.setAttribute('aria-label','本轮题目和答案');btn.parentNode.after(ta)}
+    ta.value=text; ta.focus(); ta.select(); btn.textContent='复制不了，请手动复制下面的内容';
+  };
+  try{navigator.clipboard.writeText(text).then(()=>{btn.textContent=`已复制 ${n} 题`;setTimeout(()=>{btn.textContent=label},2000)},manual)}catch(e){manual()}
+}
+const KEYMAX=Math.max(...Object.keys(KEY).map(k=>k.split(' ').length));
+const POS=/^(n|v|vt|vi|adj|adv|prep|conj|pron|art|num|int|det|phr|aux|modal|vlink)$/;
+function parseImport(text){ // the known words in pasted text (longest match within each stretch of English, each once), and the stretches that matched nothing
+  const found=[], miss=[];
+  text.split(/[\n\r,，、;；|\t]+/).forEach(seg=>(seg.match(/[A-Za-z][A-Za-z'’\- ]*/g)||[]).forEach(run=>{
+    const t=norm(run).split(' ').map(w=>w.replace(/^[-']+|[-']+$/g,'')).filter(Boolean); let hit=false;
+    for(let i=0;i<t.length;){
+      let n=Math.min(KEYMAX,t.length-i), k;
+      for(;n>0&&!(k=KEY[t.slice(i,i+n).join(' ')]);n--);
+      if(n){hit=true; if(!found.includes(k)) found.push(k); i+=n} else i++;
+    }
+    const s=t.join(' ');
+    if(!hit&&s&&!t.every(w=>POS.test(w))&&!miss.includes(s)) miss.push(s);
+  }));
+  return {found,miss};
+}
+let pending=[];
+function openImport(){showTab('wrong');$('#importBox').hidden=false;$('#importMsg').textContent='';$('#importText').focus()}
+function closeImport(){$('#importBox').hidden=true;$('#importText').value='';$('#importPreview').innerHTML='';pending=[]}
+function previewImport(){ // nothing is recorded until 确认导入, so stray English in what the AI wrote can't slip in unseen
+  const {found,miss}=parseImport($('#importText').value); pending=found;
+  $('#importPreview').innerHTML=(found.length?`<div class="note">认出 ${found.length} 个词，确认后记入错词本：</div><div class="chips">${found.map(k=>`<span class="chip${wrong[k]?'':' new'}"><b>${esc(k)}</b>${wrong[k]?`已有 ${wrong[k]} 次 → ${wrong[k]+1}`:'新加入'}</span>`).join('')}</div>`
+      :'<div class="note">没认出词表或近义词里的词。</div>')
+    +(miss.length?`<div class="note">没认出，不会导入：${miss.map(esc).join('、')}</div>`:'')
+    +(found.length?`<div class="row"><button class="btn primary" id="importGo">确认导入 ${found.length} 个</button></div>`:'');
+  if(found.length) $('#importGo').onclick=applyImport;
+}
+function logMiss(k){ // an imported word counts as missed on the latest day it was practised (handwritten answers were logged as right)
+  const r=RW[k], sk=SI.filter(x=>skey(x)===k).map(x=>x.gi+':'+x.ii);
+  const days=Object.keys(log).filter(d=>/^\d{4}-\d\d-\d\d$/.test(d)).sort().reverse();
+  for(const d of days){
+    const w=log[d].w||{}, s=log[d].s||{};
+    if(!(r&&r.id in w)&&!sk.some(x=>x in s)) continue;
+    if(r&&w[r.id]===1) w[r.id]=0;
+    sk.forEach(x=>{if(s[x]===1) s[x]=0});
+    return;
+  }
+}
+function applyImport(){
+  const n=pending.length; let fresh=0;
+  pending.forEach(k=>{if(!wrong[k]) fresh++; wrong[k]=(wrong[k]||0)+1; logMiss(k)});
+  store.set('wrong',wrong); store.set('log',log); updWrongCount(); paintToday();
+  closeImport(); renderWrong();
+  $('#importMsg').textContent=`已导入 ${n} 个错词：新加入 ${fresh} 个，${n-fresh} 个错误次数 +1。`;
+}
+$('#importOpen').addEventListener('click',openImport);
+$('#importCancel').addEventListener('click',closeImport);
+$('#importParse').addEventListener('click',previewImport);
+$('#importFile').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; if(f) f.text().then(t=>{$('#importText').value=t;previewImport()})});
+$('#drillSynWrong').addEventListener('click',()=>{sWrong.checked=true;showTab('syn');sstart()});
 
 /* ---------- sync ---------- */
 // Everything under 'xzmx:' is mirrored to one private gist of the user's; the bookkeeping under 'xzmx-sync:' stays in this browser.
@@ -708,13 +851,13 @@ function applyData(data,t){ // replace local data with synced data and redraw fr
 function reloadState(){
   wrong=store.get('wrong',{}); updWrongCount();
   log=loadLog(); paintToday();
-  optHint.checked=store.get('hint',true); optShuffle.checked=store.get('shuffle',true); optWrong.checked=false;
+  optHint.checked=store.get('hint',true); optShuffle.checked=store.get('shuffle',true); optWrong.checked=false; optHw.checked=store.get('hw',false);
   restoreFilters();
   lscope.value=store.get('lscope','all'); if(!lscope.value) lscope.value='all';
   getMask.set(store.get('mask','none')); lCore.checked=store.get('lcore',false);
   if(!resume()) start();
   sscope.value=store.get('sscope','all'); if(!sscope.value) sscope.value='all';
-  sHint.checked=store.get('shint',true); sRec.checked=store.get('srec',false);
+  sHint.checked=store.get('shint',true); sRec.checked=store.get('srec',false); sHw.checked=store.get('shw',false); sWrong.checked=false;
   if(!sresume()) sstart();
   if(!$('#p-list').hidden) renderList();
   if(!$('#p-syn').hidden) renderGroups();
