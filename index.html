@@ -232,6 +232,7 @@ textarea.keybox{font-size:13px}
         <label class="chk"><input type="checkbox" id="optShuffle" checked> 打乱顺序</label>
         <label class="chk"><input type="checkbox" id="optWrongOnly"> 只练错词</label>
         <label class="chk"><input type="checkbox" id="optHw"> 手写模式</label>
+        <label class="chk" id="optExBox" hidden><input type="checkbox" id="optEx"> 显示例句</label>
         <button class="btn" id="restart" style="margin-left:auto">重新开始</button>
       </div>
     </div>
@@ -243,7 +244,7 @@ textarea.keybox{font-size:13px}
         <li>再按“图表数据”“应用文”这类题型词，以及你常练的话题刷“全部”。</li>
         <li>每个词看一眼搭配，最好当场用它造个句子。阅卷时拼错、用错比只用简单词更扣分。</li>
         <li>隔天先练“错词本”，清空了再练新词。</li>
-        <li>想练手写就勾 <b>手写模式</b>：在纸上写，点“下一个”往下翻。写完点“复制本轮题目”，连同纸的照片发给 AI 批改，再把它找出的错词粘贴到错词本的“导入错词”里。</li>
+        <li>想练手写就勾 <b>手写模式</b>：在纸上写，点“下一个”往下翻。再勾 <b>显示例句</b>，题目下面会出现挖空的作文例句，看着语境写（空里可能是 increased 这样的变形，纸上写词条原形就行）。写完点“复制本轮题目”，连同纸的照片发给 AI 批改，再把它找出的错词粘贴到错词本的“导入错词”里。</li>
       </ol>
     </div>
   </section>
@@ -363,9 +364,11 @@ function showTab(name){
 const scopeSel=$('#scope'); scopeSel.value=store.get('scope','all'); if(!scopeSel.value) scopeSel.value='all';
 const getLvl=segBind('#lvl','lvl','1',()=>start());
 const getSrc=segBind('#src','src','all',()=>start());
-const optHint=$('#optHint'), optShuffle=$('#optShuffle'), optWrong=$('#optWrongOnly'), optHw=$('#optHw');
-optHint.checked=store.get('hint',true); optShuffle.checked=store.get('shuffle',true); optHw.checked=store.get('hw',false);
-optHw.addEventListener('change',()=>{store.set('hw',optHw.checked);paint()});
+const optHint=$('#optHint'), optShuffle=$('#optShuffle'), optWrong=$('#optWrongOnly'), optHw=$('#optHw'), optEx=$('#optEx');
+optHint.checked=store.get('hint',true); optShuffle.checked=store.get('shuffle',true); optHw.checked=store.get('hw',false); optEx.checked=store.get('hwex',false);
+const paintExBox=()=>{$('#optExBox').hidden=!optHw.checked}; paintExBox(); // 显示例句 is a handwriting-mode option
+optHw.addEventListener('change',()=>{store.set('hw',optHw.checked);paintExBox();paint()});
+optEx.addEventListener('change',()=>{store.set('hwex',optEx.checked);paint()});
 scopeSel.addEventListener('change',()=>{store.set('scope',scopeSel.value);start()});
 optHint.addEventListener('change',()=>{store.set('hint',optHint.checked);paint()});
 optShuffle.addEventListener('change',()=>{store.set('shuffle',optShuffle.checked);start()});
@@ -413,6 +416,17 @@ function diff(ans,got){ // mark letters of ans not matched by LCS with got
   while(i<m){ if(j<n&&A[i]===b[j]){out+=esc(a[i]);i++;j++} else if(j<n&&L[i][j+1]>=L[i+1][j]){j++} else {out+=`<span class="miss">${esc(a[i])}</span>`;i++} }
   return out;
 }
+function exBlank(r){ // the example with every occurrence of the word, or of the inflected form it takes there (increased, misunderstood), blanked out
+  const q=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), tries=[q(r.w)+'(?![A-Za-z])'];
+  if(!/\s/.test(r.w)) for(let k=0;k<=3&&r.w.length-k>=3;k++) tries.push(q(r.w.slice(0,r.w.length-k))+'[A-Za-z]*');
+  for(const t of tries){
+    const re=new RegExp('(^|[^A-Za-z])('+t+')','gi'); let out='', end=0, m;
+    while((m=re.exec(r.col))){const at=m.index+m[1].length; out+=esc(r.col.slice(end,at))+'<span class="blank">&nbsp;</span>'; end=at+m[2].length}
+    if(end) return out+esc(r.col.slice(end));
+  }
+  return null; // not found: only the Chinese is shown, never English that would give the answer away
+}
+function exHTML(r){const b=exBlank(r);return (b?`<p class="sent">${b}</p>`:'')+`<p class="sent-cn">${esc(r.colcn)}</p>`}
 function promptHTML(p){ // dim the part-of-speech tags
   return esc(p).replace(/((?:vt|vi|n|adj|adv|prep|conj|det|pron|modal|vlink|int)\.(?:\/(?:vt|vi|n|adj|adv|prep|conj)\.)*)/g,'<span class="pos">$1</span>');
 }
@@ -469,7 +483,7 @@ function paint(focus){
   inp.closest('.card').classList.toggle('hw',hw);
   const top=`<div class="meta"><span class="tag">${esc(c.name)}</span>${r.p===1?'<span class="tag core">★ 核心</span>':''}<span class="tag ${r.src==='超'?'chao':''}">${esc(srcLabel(r))}</span><span class="prog">${pos+1} / ${deck.length}${hw?'':` · 对 ${ok} · 错 ${bad}`}</span></div>
   <p class="prompt">${promptHTML(state==='ask'?r.q:r.prompt)}</p>
-  <div class="hint">${optHint.checked?esc(hintOf(r.w))+`　(${letters(r.w)})`:''}</div>`;
+  <div class="hint">${optHint.checked?esc(hintOf(r.w))+`　(${letters(r.w)})`:''}</div>${state==='ask'&&hw&&optEx.checked?exHTML(r):''}`;
   let bot;
   if(state==='ask'){
     bot=hw?`<div class="actions"><button class="btn primary" id="hwnext">下一个</button><button class="btn" id="giveup">不会，看答案</button>${copyBtn}<span class="kbd">回车下一个</span></div>`
@@ -875,6 +889,7 @@ function reloadState(){
   wrong=store.get('wrong',{}); updWrongCount();
   log=loadLog(); paintToday();
   optHint.checked=store.get('hint',true); optShuffle.checked=store.get('shuffle',true); optWrong.checked=false; optHw.checked=store.get('hw',false);
+  optEx.checked=store.get('hwex',false); paintExBox();
   restoreFilters();
   lscope.value=store.get('lscope','all'); if(!lscope.value) lscope.value='all';
   getMask.set(store.get('mask','none')); lCore.checked=store.get('lcore',false);
