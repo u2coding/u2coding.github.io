@@ -796,19 +796,42 @@ const API='https://api.github.com', FILE='xzmx-sync.json';
 const ss={get(k){try{return localStorage.getItem('xzmx-sync:'+k)}catch(e){return null}},
           set(k,v){try{v==null?localStorage.removeItem('xzmx-sync:'+k):localStorage.setItem('xzmx-sync:'+k,String(v))}catch(e){}}};
 let ready=false, running=null, rerun=false, flushing=null, pushTimer=0, retryTimer=0, syncState='', syncedAt='';
+let lastPushAt=0, blockedUntil=0, fails=0, failStatus=0;
 const localT=()=>+ss.get('t')||0;
+const hhmm=ms=>new Date(ms).toTimeString().slice(0,5);
 function canon(v){return v&&typeof v==='object'?(Array.isArray(v)?'['+v.map(canon).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}'):JSON.stringify(v)}
 function touched(){ // called on every store.set once the page has loaded
   if(!ready) return;
   ss.set('t',Math.max(Date.now(),localT()+1));
-  if(ss.get('token')){clearTimeout(pushTimer);pushTimer=setTimeout(sync,1500)}
+  schedulePush();
+}
+// GitHub allows 500 content-creating requests an hour, and pushing after every answer went past it, so changes are
+// batched into at most one upload a minute while practising; hiding or closing the page still uploads straight away (flush).
+const PUSH_GAP=60000;
+function schedulePush(){
+  if(!ss.get('token')||pushTimer) return; // an upload is already coming and will carry this change too
+  const at=Math.max(Date.now()+5000,lastPushAt+PUSH_GAP,blockedUntil);
+  pushTimer=setTimeout(()=>{pushTimer=0;sync()},at-Date.now());
+}
+function cancelPush(){clearTimeout(pushTimer);pushTimer=0}
+function retryAt(when){ // nothing goes to GitHub before `when`, then one sync tries again
+  clearTimeout(retryTimer); blockedUntil=when;
+  retryTimer=setTimeout(()=>{retryTimer=0;blockedUntil=0;sync()},Math.max(0,when-Date.now()));
 }
 async function gh(method,path,body,keepalive){
   if(method==='GET') path+=(path.includes('?')?'&':'?')+'_='+Date.now(); // keep the browser's HTTP cache out of it
   const headers={Authorization:'Bearer '+ss.get('token'),Accept:'application/vnd.github+json'};
   if(body) headers['Content-Type']='application/json';
   const res=await fetch(API+path,{method,headers,keepalive:!!keepalive,body:body?JSON.stringify(body):undefined});
-  if(!res.ok){const e=new Error('GitHub '+res.status);e.status=res.status;throw e}
+  if(!res.ok){
+    const e=new Error('GitHub '+res.status); e.status=res.status;
+    let msg=''; try{msg=String((await res.json()).message||'')}catch(x){}
+    const ra=+res.headers.get('retry-after'), left=res.headers.get('x-ratelimit-remaining'), reset=+res.headers.get('x-ratelimit-reset');
+    // rate limited: 429, a 403 that says so, or the 422 “Update a gist” answers when it is being spammed
+    e.limited=res.status===429||(res.status===403&&(ra>0||left==='0'||/rate limit|abuse/i.test(msg)))||(res.status===422&&/spam/i.test(msg));
+    if(ra>0) e.wait=ra*1000; else if(left==='0'&&reset) e.wait=Math.max(0,reset*1000-Date.now())+1000;
+    throw e;
+  }
   return res.json();
 }
 function blob(){
@@ -825,7 +848,7 @@ async function findGist(){ // a new browser only needs the token: look the gist 
   return null;
 }
 async function push(){
-  const b=blob();
+  const b=blob(); lastPushAt=Date.now();
   await gh('PATCH','/gists/'+ss.get('gist'),{files:{[FILE]:{content:JSON.stringify(b)}}});
   ss.set('base',b.t);
 }
@@ -897,12 +920,18 @@ async function syncStep(){
 function sync(){
   if(!ss.get('token')) return Promise.resolve();
   if(running){rerun=true;return running}
-  clearTimeout(pushTimer); clearTimeout(retryTimer); setSync('busy');
+  if(Date.now()<blockedUntil){if(!retryTimer) retryAt(blockedUntil);return Promise.resolve()} // backing off: the retry timer will sync
+  cancelPush(); clearTimeout(retryTimer); retryTimer=0; setSync('busy');
   running=(async()=>{
-    try{ do{rerun=false;await syncOnce()}while(rerun); syncedAt=new Date().toTimeString().slice(0,5); setSync('ok') }
+    try{ do{rerun=false;await syncOnce()}while(rerun); fails=0; syncedAt=hhmm(Date.now()); setSync('ok') }
     catch(e){
-      if(e.status===401){ss.set('token',null);syncState='bad';renderSync()}
-      else {setSync('fail');retryTimer=setTimeout(sync,30000)}
+      if(e.status===401){ss.set('token',null);syncState='bad';renderSync();return}
+      fails++; failStatus=e.status||0;
+      // back off as GitHub asks; the first network failure (often the first request after a phone wakes up) retries quietly
+      const st=e.limited?'limited':e.status?'http':'net';
+      const wait=st==='limited'?Math.max(60000,e.wait||Math.min(60000*2**(fails-1),1800000))
+        :st==='net'&&fails===1?5000:Math.min(30000*2**(fails-(st==='net'?2:1)),600000);
+      retryAt(Date.now()+wait); setSync(st==='net'&&fails===1?'busy':st);
     }
     finally{running=null}
   })();
@@ -910,26 +939,33 @@ function sync(){
 }
 function flush(){ // the page may be closing: send unsynced changes now; keepalive lets the request outlive the page
   const id=ss.get('gist'), base=ss.get('base'), b=blob();
-  if(!ss.get('token')||!id||base==null||b.t<=+base||running||flushing) return;
-  clearTimeout(pushTimer);
-  flushing=gh('PATCH','/gists/'+id,{files:{[FILE]:{content:JSON.stringify(b)}}},true)
+  if(!ss.get('token')||!id||base==null||b.t<=+base||running||flushing||Date.now()<blockedUntil) return;
+  cancelPush(); lastPushAt=Date.now();
+  const body={files:{[FILE]:{content:JSON.stringify(b)}}};
+  // browsers refuse keepalive bodies over 64KB; a bigger one still goes through when the tab is only hidden, not closed
+  const small=new Blob([JSON.stringify(body)]).size<60000;
+  flushing=gh('PATCH','/gists/'+id,body,small)
     .then(()=>{ss.set('base',b.t)},()=>{}).finally(()=>{flushing=null});
 }
 function setSync(s){syncState=s;paintSyncState()}
 function paintSyncState(){
-  const on=!!ss.get('token');
+  const on=!!ss.get('token'), at=hhmm(blockedUntil);
   $('#syncState').textContent='跨浏览器同步：'+(!on?(syncState==='bad'?'令牌无效或已过期，请重新填写':'未开启')
-    :syncState==='busy'?'同步中…':syncState==='fail'?'同步失败（网络问题），稍后自动重试':syncState==='ok'?'已同步 · '+syncedAt:'已开启');
-  $('#sync').classList.toggle('err',syncState==='bad'||syncState==='fail');
+    :syncState==='busy'?'同步中…':syncState==='ok'?'已同步 · '+syncedAt
+    :syncState==='limited'?`同步太频繁，GitHub 暂时限制了，${at} 后自动重试`
+    :syncState==='net'?`同步失败（网络问题），${at} 后自动重试`
+    :syncState==='http'?`同步失败（GitHub 返回 ${failStatus}），${at} 后自动重试`:'已开启');
+  $('#sync').classList.toggle('err',['bad','limited','net','http'].includes(syncState));
+  const now=$('#syncNow'); if(now) now.disabled=syncState==='limited'; // retrying early while limited only prolongs it
 }
 function renderSync(){
   const box=$('#syncBody');
   if(ss.get('token')){
-    box.innerHTML=`<div>已连接到你 GitHub 账号下的私有 Gist。打开页面或切回这个标签页时自动拉取，练习时自动上传。关闭同步期间在这个浏览器里练的内容，重新开启后会上传，不会丢。</div>
+    box.innerHTML=`<div>已连接到你 GitHub 账号下的私有 Gist。打开页面或切回这个标签页时自动拉取；练习时大约每分钟上传一次，切走或关闭页面时立即上传。关闭同步期间在这个浏览器里练的内容，重新开启后会上传，不会丢。</div>
       <div class="row"><button class="btn" id="syncNow">立即同步</button><button class="btn ghost" id="syncOff">关闭同步</button></div>`;
-    $('#syncNow').onclick=()=>sync();
+    $('#syncNow').onclick=()=>{if(syncState==='limited') return; clearTimeout(retryTimer);retryTimer=0;blockedUntil=0;sync()};
     // only the token goes: gist and base stay, so turning sync back on uploads what was practised meanwhile instead of rejoining
-    $('#syncOff').onclick=()=>{clearTimeout(pushTimer);clearTimeout(retryTimer);ss.set('token',null);syncState='';renderSync()};
+    $('#syncOff').onclick=()=>{cancelPush();clearTimeout(retryTimer);retryTimer=0;ss.set('token',null);syncState='';renderSync()};
   } else {
     box.innerHTML=`<div>把错词本、练习进度和练习记录存进你 GitHub 账号下的一个私有 Gist。每个浏览器填一次令牌，之后自动同步。</div>
       <ol><li>打开 <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=%E5%86%99%E4%BD%9C%E8%AF%8D%E6%B1%87%E9%BB%98%E5%86%99%E6%9C%AC" target="_blank" rel="noopener">GitHub · 新建令牌</a>（已勾好 gist 权限），有效期建议选长一些或 No expiration，点 Generate token 后复制。</li>
