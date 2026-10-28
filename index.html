@@ -518,7 +518,7 @@ function check(give){
   const good=give!==true&&accepted(r).includes(norm(got));
   if(good) ok++; else {bad++; wrong[r.w]=(wrong[r.w]||0)+1; store.set('wrong',wrong); updWrongCount()}
   if(give===true&&optHw.checked) hand[r.id]='g';
-  last={got:give===true?'':got.trim(),good,day:give===true?null:logAnswer('w',r.id,good)}; state='show'; save(); paint();
+  last={got:give===true?'':got.trim(),good,day:logAnswer('w',r.id,good)}; state='show'; save(); paint();
   inView($('#drill .verdict'),$('#next'));
 }
 function next(){pos++;state='ask';last=null;save();paint();const c=$('#drill .card');inView(c,$('#drill .lines')||c)}
@@ -578,7 +578,7 @@ $('#clearWrong').addEventListener('click',askClear);
 
 /* ---------- practice log ---------- */
 // log[day].w / .s: the words (by id) and synonym sentences (group:item) answered that day, each counted once; the value is whether the day's first answer was right.
-// “不会，看答案” isn't an answer, so it isn't counted.
+// “不会，看答案” counts too, as not right.
 function loadLog(){const v=store.get('log',{});return v&&typeof v==='object'&&!Array.isArray(v)?v:{}}
 let log=loadLog();
 function dayKey(d){d=d||new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
@@ -600,7 +600,7 @@ function todayHTML(){const k=dayKey(), n=streak();return `<span>今天已练 默
 function paintToday(){$('#today').innerHTML=todayHTML()}
 function renderLog(){
   const days=Object.keys(log).filter(k=>/^\d{4}-\d\d-\d\d$/.test(k)&&(cnt(k,'w')||cnt(k,'s'))).sort().reverse();
-  if(!days.length){$('#log').innerHTML='<div class="empty">还没有练习记录。在“默写”或“近义词辨析”里答完一个词，这里就会按天记下来。</div>';return}
+  if(!days.length){$('#log').innerHTML='<div class="empty">还没有练习记录。在“默写”或“近义词辨析”里答完一个词或点“不会，看答案”，这里就会按天记下来。</div>';return}
   const now=new Date(), today=dayKey(now), yest=dayKey(new Date(now.getFullYear(),now.getMonth(),now.getDate()-1));
   const max=Math.max(1,...days.map(k=>cnt(k,'w'))), pct=(k,kind)=>Math.round(right(k,kind)*100/cnt(k,kind))+'%';
   $('#log').innerHTML=`<div class="stats" style="margin-bottom:10px">${todayHTML()}<span>共练习 <b>${days.length}</b> 天</span></div><div class="wrong-list">${days.map(k=>{
@@ -608,7 +608,7 @@ function renderLog(){
     return `<div class="lg"><div class="d">${y!==now.getFullYear()?y+'年':''}${m}月${d}日 周${wd}${k===today?'<small>今天</small>':k===yest?'<small>昨天</small>':''}</div>
       <div class="bar" aria-hidden="true"><i style="width:${w*100/max}%"></i></div>
       <div class="n">${w?`<span>默写 <b>${w}</b> 词 · 首次拼对 <b>${pct(k,'w')}</b></span>`:''}${s?`<span>辨析 <b>${s}</b> 句 · 首次答对 <b>${pct(k,'s')}</b></span>`:''}</div></div>`;
-  }).join('')}</div><div style="font-size:12px;color:var(--muted);margin-top:8px">同一天里同一个词不管练几遍只算一次，拼对、拼错都算；点“不会，看答案”的不算。正确率按当天第一次作答算。</div>`;
+  }).join('')}</div><div style="font-size:12px;color:var(--muted);margin-top:8px">同一天里同一个词不管练几遍只算一次，拼对、拼错、点“不会，看答案”都算，不会的算作没答对。正确率按当天第一次作答算。</div>`;
 }
 
 /* ---------- synonyms ---------- */
@@ -714,7 +714,7 @@ function scheck(give){
   const good=give!==true&&acc.includes(norm(got));
   if(good) sok++; else {sbad++; const k=skey(x); wrong[k]=(wrong[k]||0)+1; store.set('wrong',wrong); updWrongCount()}
   if(give===true&&sHw.checked) shand[x.gi+':'+x.ii]='g';
-  slast={got:give===true?'':got.trim(),good,day:give===true?null:logAnswer('s',x.gi+':'+x.ii,good)}; sstate='show'; ssave(); spaint();
+  slast={got:give===true?'':got.trim(),good,day:logAnswer('s',x.gi+':'+x.ii,good)}; sstate='show'; ssave(); spaint();
   inView($('#sdrill .verdict'),$('#snext'));
 }
 function snext(){spos++;sstate='ask';slast=null;ssave();spaint();const c=$('#sdrill .card');inView(c,$('#sdrill .lines')||c)}
