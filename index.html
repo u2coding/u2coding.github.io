@@ -163,6 +163,8 @@ td.src.chao{color:var(--red)}
 .confirm{display:inline-flex;gap:8px;align-items:center;font-size:13px;color:var(--red)}
 textarea{font:inherit;font-size:14px;line-height:1.6;color:var(--ink);background:var(--paper);border:1px solid var(--rule-strong);border-radius:6px;padding:8px 10px;width:100%;resize:vertical}
 textarea.keybox{font-size:13px}
+.copyrange{display:flex;flex-direction:column;gap:8px;background:var(--chip);border-radius:8px;padding:10px 12px;font-size:14px}
+.copyrange input{width:4.5em;font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--rule-strong);border-radius:6px;padding:4px 6px;text-align:center}
 .note{font-size:13px;color:var(--muted)}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{background:var(--chip);border-radius:4px;padding:2px 8px;font-size:13px;color:var(--muted)}
@@ -381,9 +383,9 @@ function restoreFilters(){
 }
 function exitWrong(){optWrong.checked=false;restoreFilters();start()}
 
-let deck=[],pos=0,ok=0,bad=0,state='ask',last=null,hand={}; // hand[id]: 'h' written on paper in handwriting mode, 'g' given up there
+let deck=[],pos=0,ok=0,bad=0,state='ask',last=null,hand={},cut=0; // hand[id]: 'h' written on paper in handwriting mode, 'g' given up there; cut: the last question number copied
 // the round in progress (word order, position, score, filters it was built from) is saved so a refresh picks up where it left off
-function save(){store.set('round',{ids:deck.map(r=>r.id),pos,ok,bad,state,last,hand,wo:optWrong.checked,sc:scopeSel.value,lvl:getLvl(),src:getSrc()})}
+function save(){store.set('round',{ids:deck.map(r=>r.id),pos,ok,bad,state,last,hand,cut,wo:optWrong.checked,sc:scopeSel.value,lvl:getLvl(),src:getSrc()})}
 function resume(){
   const s=store.get('round',null);
   if(!s||!Array.isArray(s.ids)||typeof s.lvl!=='string'||typeof s.src!=='string') return false;
@@ -391,7 +393,7 @@ function resume(){
   const d=s.ids.map(id=>byId[id]); if(!d.length||!d.every(Boolean)) return false;
   optWrong.checked=!!s.wo; scopeSel.value=s.sc; if(!scopeSel.value) scopeSel.value='all';
   getLvl.set(s.lvl); getSrc.set(s.src);
-  deck=d; pos=Math.min(s.pos|0,deck.length); ok=s.ok|0; bad=s.bad|0; hand=s.hand&&typeof s.hand==='object'?s.hand:{};
+  deck=d; pos=Math.min(s.pos|0,deck.length); ok=s.ok|0; bad=s.bad|0; hand=s.hand&&typeof s.hand==='object'?s.hand:{}; cut=s.cut|0;
   state=s.state==='show'&&s.last&&pos<deck.length?'show':'ask'; last=state==='show'?s.last:null;
   paint(true); return true;
 }
@@ -402,7 +404,7 @@ function pool(){
 function start(){
   deck=pool().slice();
   if(optShuffle.checked){for(let i=deck.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[deck[i],deck[j]]=[deck[j],deck[i]]}}
-  pos=0;ok=0;bad=0;state='ask';last=null;hand={};save();paint(true);
+  pos=0;ok=0;bad=0;state='ask';last=null;hand={};cut=0;save();paint(true);
 }
 function norm(s){return s.toLowerCase().replace(/[’']/g,"'").replace(/\s+/g,' ').trim()}
 function accepted(r){return [r.w,...r.alt].map(norm)}
@@ -468,7 +470,7 @@ function paint(focus){
       :`<div class="big">${ok} / ${tot}</div><div>正确率 ${rate}%${bad?`，有 ${bad} 个词进了错词本`:'，全部拼对'}</div>`}
       <div class="actions" style="justify-content:center">${nk?'<button class="btn primary" id="copyKey">复制本轮题目</button><button class="btn" id="goImport">去导入错词</button>':''}<button class="btn${nk?'':' primary'}" id="again">再来一轮</button>${optWrong.checked?'<button class="btn" id="exitWrong">退出错词练习</button>':bad?'<button class="btn" id="goWrong">只练错词</button>':''}</div></div>`;
     $('#again').onclick=()=>start();
-    if(nk){$('#copyKey').onclick=()=>copyKey('w',$('#copyKey'));$('#goImport').onclick=openImport}
+    if(nk){$('#copyKey').onclick=()=>openCopy('w',$('#copyKey'));$('#goImport').onclick=openImport}
     if(optWrong.checked) $('#exitWrong').onclick=exitWrong;
     else if(bad) $('#goWrong').onclick=()=>{optWrong.checked=true;start()};
     return;
@@ -499,7 +501,7 @@ function paint(focus){
     <div class="actions"><button class="btn primary" id="next">下一个</button>${copyBtn}<span class="kbd">回车下一个</span></div>`;
   }
   fillCard(inp,top,bot,state==='show',last&&last.got);
-  const ck=$('#copyKey'); if(ck) ck.onclick=()=>copyKey('w',ck);
+  const ck=$('#copyKey'); if(ck) ck.onclick=()=>openCopy('w',ck);
   if(state==='ask'&&hw){
     $('#hwnext').onclick=hwNext; $('#giveup').onclick=()=>check(true);
     if(focus!==false) $('#hwnext').focus({preventScroll:true}); // a button, so no phone keyboard; Enter on a real keyboard presses it
@@ -625,14 +627,14 @@ sscope.addEventListener('change',()=>{store.set('sscope',sscope.value);sstart();
 sHint.addEventListener('change',()=>{store.set('shint',sHint.checked);spaint()});
 sRec.addEventListener('change',()=>{store.set('srec',sRec.checked);sstart()});
 $('#sRestart').addEventListener('click',()=>sstart());
-let sdeck=[],spos=0,sok=0,sbad=0,sstate='ask',slast=null,shand={};
+let sdeck=[],spos=0,sok=0,sbad=0,sstate='ask',slast=null,shand={},scut=0;
 // like the word drill, the round in progress is saved so a refresh picks up where it left off
-function ssave(){store.set('sround',{ids:sdeck.map(x=>x.gi+':'+x.ii),pos:spos,ok:sok,bad:sbad,state:sstate,last:slast,hand:shand,wo:sWrong.checked})}
+function ssave(){store.set('sround',{ids:sdeck.map(x=>x.gi+':'+x.ii),pos:spos,ok:sok,bad:sbad,state:sstate,last:slast,hand:shand,cut:scut,wo:sWrong.checked})}
 function sresume(){
   const s=store.get('sround',null); if(!s||!Array.isArray(s.ids)) return false;
   const byKey={}; SI.forEach(x=>byKey[x.gi+':'+x.ii]=x);
   const d=s.ids.map(k=>byKey[k]); if(!d.length||!d.every(Boolean)) return false;
-  sdeck=d; spos=Math.min(s.pos|0,sdeck.length); sok=s.ok|0; sbad=s.bad|0; shand=s.hand&&typeof s.hand==='object'?s.hand:{}; sWrong.checked=!!s.wo;
+  sdeck=d; spos=Math.min(s.pos|0,sdeck.length); sok=s.ok|0; sbad=s.bad|0; shand=s.hand&&typeof s.hand==='object'?s.hand:{}; scut=s.cut|0; sWrong.checked=!!s.wo;
   sstate=s.state==='show'&&s.last&&spos<sdeck.length?'show':'ask'; slast=sstate==='show'?s.last:null;
   spaint(false); return true;
 }
@@ -640,7 +642,7 @@ function sstart(){
   const sc=sscope.value;
   sdeck=SI.filter(x=>sWrong.checked?wrong[skey(x)]:(sc==='all'||String(x.gi)===sc)&&(!sRec.checked||x.rec===1)); // wrong-only takes every group
   for(let i=sdeck.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[sdeck[i],sdeck[j]]=[sdeck[j],sdeck[i]]}
-  spos=0;sok=0;sbad=0;sstate='ask';slast=null;shand={};ssave();spaint(false);
+  spos=0;sok=0;sbad=0;sstate='ask';slast=null;shand={};scut=0;ssave();spaint(false);
 }
 // wrong-book keys: a word-list word (or one of its alternative spellings) is kept under its word-list spelling, a word only the
 // synonym drill uses under its own; SYNW holds the first sentence using each of the latter, to show it in the wrong book
@@ -665,7 +667,7 @@ function spaint(focus){
       :`<div class="big">${sok} / ${tot}</div><div>正确率 ${tot?Math.round(sok*100/tot):0}%</div>`}
       <div class="actions" style="justify-content:center">${nk?'<button class="btn primary" id="scopyKey">复制本轮题目</button><button class="btn" id="sgoImport">去导入错词</button>':''}<button class="btn${nk?'':' primary'}" id="sagain">再来一轮</button>${exitBtn}</div></div>`;
     $('#sagain').onclick=()=>sstart();
-    if(nk){$('#scopyKey').onclick=()=>copyKey('s',$('#scopyKey'));$('#sgoImport').onclick=openImport}
+    if(nk){$('#scopyKey').onclick=()=>openCopy('s',$('#scopyKey'));$('#sgoImport').onclick=openImport}
     if(sWrong.checked) $('#sexitWrong').onclick=()=>{sWrong.checked=false;sstart()};
     return;
   }
@@ -694,7 +696,7 @@ function spaint(focus){
     <div class="actions"><button class="btn primary" id="snext">下一个</button>${copyBtn}<span class="kbd">回车下一个</span></div>`;
   }
   fillCard(inp,top,bot,sstate==='show',slast&&slast.got);
-  const ck=$('#scopyKey'); if(ck) ck.onclick=()=>copyKey('s',ck);
+  const ck=$('#scopyKey'); if(ck) ck.onclick=()=>openCopy('s',ck);
   if(sstate==='ask'&&hw){
     $('#shwnext').onclick=shwNext; $('#sgive').onclick=()=>scheck(true);
     if(focus!==false) $('#shwnext').focus({preventScroll:true});
@@ -735,22 +737,50 @@ function renderGroups(){
 $('#sgroups').addEventListener('click',e=>{const b=e.target.closest('button[data-g]');if(!b)return;sscope.value=b.dataset.g;store.set('sscope',sscope.value);sstart();renderGroups();$('#sdrill').scrollIntoView({behavior:'smooth',block:'start'});setTimeout(()=>{const i=$('#sans');if(i)i.focus({preventScroll:true})},300)});
 
 /* ---------- handwriting: answer key, importing wrong words ---------- */
-function keyText(kind){ // the round's handwritten (and given-up) questions, numbered as on the cards, with their answers, for whoever marks the paper
+const keyOf=(w,x)=>w?x.id:x.gi+':'+x.ii;
+function written(kind){ // the card numbers of the round's handwritten (and given-up) questions
+  const w=kind==='w', hd=w?hand:shand;
+  return (w?deck:sdeck).map((x,i)=>hd[keyOf(w,x)]?i+1:0).filter(Boolean);
+}
+function keyText(kind,a,b){ // those questions numbered a to b (all of them without a range), as on the cards, with their answers, for whoever marks the paper
   const w=kind==='w', dk=w?deck:sdeck, hd=w?hand:shand, lines=[];
   dk.forEach((x,i)=>{
-    const m=hd[w?x.id:x.gi+':'+x.ii]; if(!m) return;
+    const m=hd[keyOf(w,x)]; if(!m||(a&&(i+1<a||i+1>b))) return;
     lines.push(`${i+1}. `+(w?`${x.q} —— ${x.w}${x.alt.length?`（也可写作 ${x.alt.join('、')}）`:''}`:`${x.ex.replace(/\{[^}]*\}/,'____')}（${x.cn}）—— ${x.ans}`)+(m==='g'?'（不会，已记入错词本）':''));
   });
-  return {n:lines.length,text:`写作词汇默写本 · ${w?'默写':'近义词辨析'}手写题目和答案（${lines.length} 题）\n${lines.join('\n')}`};
+  return {n:lines.length,text:`写作词汇默写本 · ${w?'默写':'近义词辨析'}手写题目和答案（${a?`第 ${a}–${b} 题，共 `:''}${lines.length} 题）\n${lines.join('\n')}`};
 }
-function copyKey(kind,btn){
-  const {n,text}=keyText(kind), label=btn.textContent;
+function setCut(kind,n){if(kind==='w'){cut=n;save()}else{scut=n;ssave()}}
+function openCopy(kind,btn){ // 复制已写题目 / 复制本轮题目: pick which written questions to copy by their card numbers, by default the ones not copied yet
+  const row=btn.parentNode, open=row.nextElementSibling;
+  if(open&&open.classList.contains('copyrange')){open.remove();return} // a second tap puts it away
+  const nums=written(kind); if(!nums.length) return;
+  const done=kind==='w'?cut:scut, first=nums[0], last=nums[nums.length-1];
+  const el=document.createElement('div'); el.className='copyrange';
+  el.innerHTML=`<div>从第 <input type="number" min="1" inputmode="numeric" aria-label="从第几题" value="${nums.find(n=>n>done)||first}"> 题 到第 <input type="number" min="1" inputmode="numeric" aria-label="到第几题" value="${last}"> 题</div>
+    <div class="note">已写 ${nums.length} 题（第 ${first===last?first:`${first}–${last}`} 题）${done?`，上次复制到第 ${done} 题`:''}</div>
+    <div class="row"><button class="btn primary"></button><button class="btn">复制全部</button><button class="btn ghost">取消</button></div>`;
+  row.after(el);
+  const [ia,ib]=el.querySelectorAll('input'), [go,all,no]=el.querySelectorAll('button');
+  const pick=()=>nums.filter(n=>n>=+ia.value&&n<=+ib.value);
+  const upd=()=>{const k=pick().length; go.textContent=`复制 ${k} 题`; go.disabled=!k};
+  const copy=(sel,whole)=>{
+    const a=sel[0], b=sel[sel.length-1], {n,text}=whole?keyText(kind):keyText(kind,a,b);
+    el.remove(); setCut(kind,Math.max(done,b));
+    copyText(btn,text,`已复制 ${n} 题${whole?'':`（第 ${a}–${b} 题）`}`);
+  };
+  [ia,ib].forEach(i=>{i.addEventListener('input',upd);i.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!go.disabled) go.click()}})});
+  go.onclick=()=>copy(pick(),false); all.onclick=()=>copy(nums,true); no.onclick=()=>el.remove();
+  upd(); go.focus({preventScroll:true});
+}
+function copyText(btn,text,msg){
+  const label=btn.textContent;
   const manual=()=>{ // no clipboard access: put the text where it can be copied by hand
     let ta=btn.parentNode.nextElementSibling;
     if(!ta||!ta.classList.contains('keybox')){ta=document.createElement('textarea');ta.className='keybox';ta.readOnly=true;ta.rows=8;ta.setAttribute('aria-label','本轮题目和答案');btn.parentNode.after(ta)}
     ta.value=text; ta.focus(); ta.select(); btn.textContent='复制不了，请手动复制下面的内容';
   };
-  try{navigator.clipboard.writeText(text).then(()=>{btn.textContent=`已复制 ${n} 题`;setTimeout(()=>{btn.textContent=label},2000)},manual)}catch(e){manual()}
+  try{navigator.clipboard.writeText(text).then(()=>{btn.textContent=msg;setTimeout(()=>{btn.textContent=label},2000)},manual)}catch(e){manual()}
 }
 const KEYMAX=Math.max(...Object.keys(KEY).map(k=>k.split(' ').length));
 const POS=/^(n|v|vt|vi|adj|adv|prep|conj|pron|art|num|int|det|phr|aux|modal|vlink)$/;
