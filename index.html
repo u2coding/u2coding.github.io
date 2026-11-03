@@ -186,6 +186,7 @@ textarea.keybox{font-size:13px}
 .chip{background:var(--chip);border-radius:4px;padding:2px 8px;font-size:13px;color:var(--muted)}
 .chip b{font-family:var(--f-word);color:var(--ink);margin-right:4px}
 .chip.new b{color:var(--red)}
+.chip.del b{text-decoration:line-through;text-decoration-color:var(--ok)}
 #importMsg:empty{display:none}
 #importMsg{background:var(--ok-soft);border-radius:8px;padding:10px 12px;font-size:14px}
 /* practice log */
@@ -306,7 +307,8 @@ textarea.keybox{font-size:13px}
       <span id="clearBox"><button class="btn ghost" id="clearWrong">清空错词本</button></span>
     </div>
     <div class="controls" id="importBox" hidden>
-      <div class="note">把 AI 批改出的错词粘贴到下面：每行一个，或用逗号、顿号隔开都行，序号、中文释义会自动忽略。已经在错词本里的词，错误次数加 1。</div>
+      <div class="note">把 AI 批改出的错词粘贴到下面：每行一个，或用逗号、顿号隔开都行，序号、中文释义会自动忽略。已经在错词本里的词，错误次数加 1。选了对照的复制时，那次复制的题里没出现在错词中的词算作写对了，会从错词本删除。</div>
+      <div class="row" id="againstRow" hidden><span class="lbl">对照</span><select id="importAgainst" aria-label="对照哪次复制"></select></div>
       <textarea id="importText" rows="6" aria-label="要导入的错词" placeholder="例如：&#10;3. obtain&#10;7. according to 根据"></textarea>
       <div class="row"><label class="btn">选择文件<input type="file" id="importFile" accept=".txt,.csv,.tsv,.md,text/plain" hidden></label><button class="btn primary" id="importParse">识别</button><button class="btn ghost" id="importCancel">取消</button></div>
       <div id="importPreview" class="panel" style="gap:8px"></div>
@@ -776,6 +778,14 @@ function keyText(kind,a,b){ // those questions numbered a to b (all of them with
   return {n:lines.length,text:`写作词汇默写本 · ${w?'默写':'近义词辨析'}手写题目和答案（${a?`第 ${a}–${b} 题，共 `:''}${lines.length} 题）\n${lines.join('\n')}`};
 }
 function setCut(kind,n){if(kind==='w'){cut=n;save()}else{scut=n;ssave()}}
+// each copy is remembered (newest first), so 导入错词 can tell which copied words came back right and take them out of the wrong book
+function loadCopies(){const v=store.get('copies',[]);return Array.isArray(v)?v.filter(c=>c&&Array.isArray(c.keys)):[]}
+let copies=loadCopies();
+function recordCopy(kind,sel){
+  const w=kind==='w', dk=w?deck:sdeck, keys=[...new Set(sel.map(n=>dk[n-1]).filter(Boolean).map(x=>w?x.w:skey(x)))];
+  copies.unshift({at:Date.now(),kind,a:sel[0],b:sel[sel.length-1],keys,used:false}); copies.length=Math.min(copies.length,10);
+  store.set('copies',copies);
+}
 function openCopy(kind,btn){ // 复制已写题目 / 复制本轮题目: pick which written questions to copy by their card numbers, by default the ones not copied yet
   const row=btn.parentNode, open=row.nextElementSibling;
   if(open&&open.classList.contains('copyrange')){open.remove();return} // a second tap puts it away
@@ -791,7 +801,7 @@ function openCopy(kind,btn){ // 复制已写题目 / 复制本轮题目: pick wh
   const upd=()=>{const k=pick().length; go.textContent=`复制 ${k} 题`; go.disabled=!k};
   const copy=(sel,whole)=>{
     const a=sel[0], b=sel[sel.length-1], {n,text}=whole?keyText(kind):keyText(kind,a,b);
-    el.remove(); setCut(kind,Math.max(done,b));
+    el.remove(); setCut(kind,Math.max(done,b)); recordCopy(kind,sel);
     copyText(btn,text,`已复制 ${n} 题${whole?'':`（第 ${a}–${b} 题）`}`);
   };
   [ia,ib].forEach(i=>{i.addEventListener('input',upd);i.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!go.disabled) go.click()}})});
@@ -823,16 +833,31 @@ function parseImport(text){ // the known words in pasted text (longest match wit
   }));
   return {found,miss};
 }
-let pending=[];
-function openImport(){showTab('wrong');$('#importBox').hidden=false;$('#importMsg').textContent='';$('#importText').focus()}
-function closeImport(){$('#importBox').hidden=true;$('#importText').value='';$('#importPreview').innerHTML='';pending=[]}
-function previewImport(){ // nothing is recorded until 确认导入, so stray English in what the AI wrote can't slip in unseen
-  const {found,miss}=parseImport($('#importText').value); pending=found;
-  $('#importPreview').innerHTML=(found.length?`<div class="note">认出 ${found.length} 个词，确认后记入错词本：</div><div class="chips">${found.map(k=>`<span class="chip${wrong[k]?'':' new'}"><b>${esc(k)}</b>${wrong[k]?`已有 ${wrong[k]} 次 → ${wrong[k]+1}`:'新加入'}</span>`).join('')}</div>`
-      :'<div class="note">没认出词表或近义词里的词。</div>')
+let pending=[], pendingRm=[];
+const copyRange=c=>`第 ${c.a===c.b?c.a:`${c.a}–${c.b}`} 题`;
+function copyLabel(c){
+  const d=new Date(c.at);
+  return `${c.kind==='w'?'默写':'近义词辨析'} ${copyRange(c)}（${c.keys.length} 词，${dayKey(d)===dayKey()?'':`${d.getMonth()+1}月${d.getDate()}日 `}${hhmm(c.at)} 复制）${c.used?'（已导入过）':''}`;
+}
+function fillAgainst(){ // the latest copy not imported yet is the one being marked, most likely
+  const sel=$('#importAgainst'), next=copies.find(c=>!c.used);
+  sel.innerHTML=copies.map(c=>`<option value="${c.at}">${esc(copyLabel(c))}</option>`).join('')+'<option value="">不对照（只添加）</option>';
+  sel.value=next?String(next.at):''; $('#againstRow').hidden=!copies.length;
+}
+const against=()=>{const v=$('#importAgainst').value; return v&&copies.find(c=>String(c.at)===v)||null};
+function openImport(){showTab('wrong');fillAgainst();$('#importBox').hidden=false;$('#importMsg').textContent='';$('#importText').focus()}
+function closeImport(){$('#importBox').hidden=true;$('#importText').value='';$('#importPreview').innerHTML='';pending=[];pendingRm=[]}
+function previewImport(){ // nothing is recorded until 确认, so stray English in what the AI wrote can't slip in unseen
+  const {found,miss}=parseImport($('#importText').value), c=against(); pending=found;
+  pendingRm=c?c.keys.filter(k=>wrong[k]&&!found.includes(k)):[]; // copied, still in the book, and not marked wrong this time: written right
+  const n=found.length, m=pendingRm.length;
+  $('#importPreview').innerHTML=(n?`<div class="note">认出 ${n} 个词，确认后记入错词本：</div><div class="chips">${found.map(k=>`<span class="chip${wrong[k]?'':' new'}"><b>${esc(k)}</b>${wrong[k]?`已有 ${wrong[k]} 次 → ${wrong[k]+1}`:'新加入'}</span>`).join('')}</div>`
+      :c?'<div class="note">没有认出错词，视为全部写对。</div>':'<div class="note">没认出词表或近义词里的词。</div>')
     +(miss.length?`<div class="note">没认出，不会导入：${miss.map(esc).join('、')}</div>`:'')
-    +(found.length?`<div class="row"><button class="btn primary" id="importGo">确认导入 ${found.length} 个</button></div>`:'');
-  if(found.length) $('#importGo').onclick=applyImport;
+    +(c?(m?`<div class="note">对照${copyRange(c)}：这次写对的 ${m} 个词在错词本里，确认后删除：</div><div class="chips">${pendingRm.map(k=>`<span class="chip del"><b>${esc(k)}</b>错过 ${wrong[k]} 次</span>`).join('')}</div>`
+      :`<div class="note">对照${copyRange(c)}：没有要从错词本删除的词。</div>`):'')
+    +(n||m?`<div class="row"><button class="btn primary" id="importGo">确认：${[n?`记入 ${n} 个`:'',m?`删除 ${m} 个`:''].filter(Boolean).join('，')}</button></div>`:'');
+  if(n||m) $('#importGo').onclick=applyImport;
 }
 function logMiss(k){ // an imported word counts as missed on the latest day it was practised (handwritten answers were logged as right)
   const r=RW[k], sk=SI.filter(x=>skey(x)===k).map(x=>x.gi+':'+x.ii);
@@ -846,12 +871,15 @@ function logMiss(k){ // an imported word counts as missed on the latest day it w
   }
 }
 function applyImport(){
-  const n=pending.length; let fresh=0;
+  const n=pending.length, m=pendingRm.length, c=against(); let fresh=0;
   pending.forEach(k=>{if(!wrong[k]) fresh++; wrong[k]=(wrong[k]||0)+1; logMiss(k)});
+  pendingRm.forEach(k=>{delete wrong[k]});
+  if(c){c.used=true; store.set('copies',copies)}
   store.set('wrong',wrong); store.set('log',log); updWrongCount(); paintToday();
   closeImport(); renderWrong();
-  $('#importMsg').textContent=`已导入 ${n} 个错词：新加入 ${fresh} 个，${n-fresh} 个错误次数 +1。`;
+  $('#importMsg').textContent=(n?`已导入 ${n} 个错词：新加入 ${fresh} 个，${n-fresh} 个错误次数 +1。`:'')+(c?`对照${copyRange(c)}，${m?`删除了 ${m} 个写对的词。`:'没有要删除的词。'}`:'');
 }
+$('#importAgainst').addEventListener('change',()=>{if($('#importPreview').innerHTML) previewImport()});
 $('#importOpen').addEventListener('click',openImport);
 $('#importCancel').addEventListener('click',closeImport);
 $('#importParse').addEventListener('click',previewImport);
@@ -996,7 +1024,7 @@ function applyData(data,t){ // replace local data with synced data and redraw fr
 }
 function reloadState(){
   wrong=store.get('wrong',{}); updWrongCount();
-  log=loadLog(); paintToday();
+  log=loadLog(); paintToday(); copies=loadCopies();
   optHint.checked=store.get('hint',true); optShuffle.checked=store.get('shuffle',true); optWrong.checked=false; optHw.checked=store.get('hw',false);
   optEx.checked=store.get('hwex',false); paintExBox();
   restoreFilters();
