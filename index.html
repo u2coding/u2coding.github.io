@@ -773,7 +773,7 @@ function keyText(kind,a,b){ // those questions numbered a to b (all of them with
   const w=kind==='w', dk=w?deck:sdeck, hd=w?hand:shand, lines=[];
   dk.forEach((x,i)=>{
     const m=hd[keyOf(w,x)]; if(!m||(a&&(i+1<a||i+1>b))) return;
-    lines.push(`${i+1}. `+(w?`${x.q} —— ${x.w}${x.alt.length?`（也可写作 ${x.alt.join('、')}）`:''}`:`${x.ex.replace(/\{[^}]*\}/,'____')}（${x.cn}）—— ${x.ans}`)+(m==='g'?'（不会，已记入错词本）':''));
+    lines.push(`${i+1}. `+(w?`${x.q} —— ${x.w}${x.alt.length?`（也可写作 ${x.alt.join('、')}）`:''}${x.col?`｜例句：${x.col}${x.colcn?`（${x.colcn}）`:''}`:''}`:`${x.ex.replace(/\{[^}]*\}/,'____')}（${x.cn}）—— ${x.ans}`)+(m==='g'?'（不会，已记入错词本）':''));
   });
   return {n:lines.length,text:`写作词汇默写本 · ${w?'默写':'近义词辨析'}手写题目和答案（${a?`第 ${a}–${b} 题，共 `:''}${lines.length} 题）\n${lines.join('\n')}`};
 }
